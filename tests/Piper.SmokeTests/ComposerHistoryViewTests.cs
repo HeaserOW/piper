@@ -91,6 +91,21 @@ internal static class ComposerHistoryViewTests
             runner.AreEqual(2, rows.Count(row => row.Kind == ComposerRowKind.Request && row.Host == ComposerHistoryView.NoHost),
                 "relative targets are not folded into each other");
 
+            // Every row the pane paints dereferences ComposerRow.Session on every repaint, so a
+            // session Build should have dropped would fault the paint routine rather than simply
+            // look wrong -- and in a virtual owner-drawn list that repeats on every repaint. A
+            // request-only archive import is an attacker-influenced source of these entries.
+            var requestless = new Session();
+            var tunnel = new Session { IsTunnel = true, Request = Relative("/t", "tunnel.test") };
+            var kept = Sent("https://kept.example.test/ok", "GET", 1);
+
+            var filtered = ComposerHistoryView.Build([requestless, tunnel, kept], SearchQuery.Empty, null, null);
+            runner.AreEqual(1, filtered.Count(row => row.Kind == ComposerRowKind.Host),
+                "a request-less session and a tunnel are both dropped");
+            runner.AreEqual("kept.example.test", filtered[0].Host, "only the real send survives");
+            runner.IsTrue(filtered.All(row => row.Sends.Count > 0 && row.Session.Request is not null),
+                "every emitted row carries a session the painter can read");
+
             // What Build refuses to emit, the view-state file must refuse to carry.
             runner.IsTrue(!ComposerHistoryView.IsDisplayableHost(new string('h', 10_000)), "an oversized host is rejected");
             runner.IsTrue(!ComposerHistoryView.IsDisplayableHost("evil\r\nX-Injected: 1"), "a control character is rejected");
