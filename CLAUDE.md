@@ -40,9 +40,18 @@ out the trusted base branch and gives Claude read/comment-only tools.
   and duplicates where the wire format permits them, and reject ambiguous framing.
 - Never make certificate installation, system-proxy changes, decryption, or trust-store mutation
   implicit. They require a clear user action and a reversible path.
-- Never send telemetry or write captured credentials, cookies, bodies, certificate private keys, or
-  proxy configuration outside an explicit user-selected export. Keep them out of diagnostics and
-  logs. Do not weaken the existing warning about the locally stored CA key.
+- Never write captured credentials, cookies, bodies, certificate private keys, or proxy
+  configuration outside an explicit user-selected export. Keep them out of diagnostics and logs. Do
+  not weaken the existing warning about the locally stored CA key.
+- Anonymous usage reporting is the single exception, and it is narrow. Everything reported goes
+  through `Piper.Core/Telemetry`, whose event names, property keys, and property values are a closed
+  vocabulary: a value that is not a short run of `[A-Za-z0-9._-]` is replaced before it can be
+  queued, and re-validated again when read back off disk. Do not add a call site that widens that
+  vocabulary to carry a URL, host, header, body, path, exception message, or any other captured or
+  user-derived string, and do not bypass `Analytics` to send something directly. Reporting stays
+  opt-in: it collects nothing until the user has been asked and has agreed, opting out erases the
+  identifiers and discards what has not been sent, and the endpoint stays a compile-time constant
+  rather than a setting.
 - Bound attacker-controlled lengths, counts, buffering, decompression, recursion, concurrency, and
   waits. Propagate cancellation and use timeouts on network operations.
 - Keep blocking I/O and CPU-heavy parsing off the UI thread. Preserve cleanup when windows close,
