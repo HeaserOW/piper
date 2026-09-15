@@ -209,6 +209,13 @@ public sealed class ComposerPanel : UserControl
     /// dropped session's response as media; running both handlers would make one drop do two
     /// unrelated things. Their children are still visited, because the inspector's tab strip claims
     /// itself without claiming the pages inside it, and those pages would otherwise stay dead.
+    ///
+    /// That test depends on <c>MainForm.EnableSazFileDrop</c> registering unconditionally, which it
+    /// does: it runs after this (the panel must exist before the form can walk it), so by then every
+    /// control here already has <see cref="Control.AllowDrop"/> set. Giving that method the same
+    /// skip-if-claimed guard would silently stop <c>.saz</c> and <c>.raz</c> files being droppable
+    /// anywhere on the Composer -- silently, because these controls stay registered OLE targets and
+    /// so never fall through to an ancestor that would have taken the file.
     /// </remarks>
     private void EnableSessionDrop(Control control)
     {

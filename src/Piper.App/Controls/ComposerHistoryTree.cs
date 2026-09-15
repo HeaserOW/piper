@@ -548,16 +548,42 @@ public sealed class ComposerHistoryTree : UserControl
     /// </summary>
     private void RemoveSelected()
     {
+        var rows = SelectedRows();
         var doomed = new List<Session>();
         var seen = new HashSet<Session>();
-        foreach (var row in SelectedRows())
+        foreach (var row in rows)
         {
             foreach (var session in row.Sends)
                 if (seen.Add(session)) doomed.Add(session);
         }
 
-        if (doomed.Count == 0) return;
+        if (doomed.Count == 0 || !ConfirmGroupRemoval(rows, doomed.Count)) return;
         RemoveRequested?.Invoke(this, doomed);
+    }
+
+    /// <summary>
+    /// Asks before Del on a host row discards that whole group.
+    /// </summary>
+    /// <remarks>
+    /// A repeat row says how many sends it stands for right next to the count, so removing it is
+    /// what it looks like. A host row stands for every send under it, the removal rewrites
+    /// composer-history.json immediately, and there is no undo -- and <see cref="SelectParent"/>
+    /// deliberately parks focus on a host row when Left is pressed, so it is easy to be on one
+    /// without having aimed at it.
+    /// </remarks>
+    private bool ConfirmGroupRemoval(List<ComposerRow> rows, int sends)
+    {
+        var hosts = rows.Where(row => row.Kind == ComposerRowKind.Host).ToList();
+        if (hosts.Count == 0) return true;
+
+        var what = hosts.Count == 1
+            ? $"everything sent to {hosts[0].Host}"
+            : $"everything sent to {hosts.Count:N0} hosts";
+
+        return MessageBox.Show(this,
+            $"Remove {what} from the Composer history?\r\n\r\n"
+            + $"{sends:N0} request{(sends == 1 ? string.Empty : "s")} will be removed. This cannot be undone.",
+            "Piper", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK;
     }
 
     // ------------------------------------------------------------------ helpers
