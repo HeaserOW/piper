@@ -534,6 +534,7 @@ origin.Stop();
 
 // --------------------------------------------------------------------- HPACK
 
+await AnalyticsTests.RunAsync(runner);
 await HostFilterTests.RunAsync(runner);
 await UpdateServiceTests.RunAsync(runner);
 await WebFormParserTests.RunAsync(runner);

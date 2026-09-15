@@ -15,10 +15,12 @@ public sealed class ConfigurationsDialog : Form
     private CheckBox _http2Upstream = null!;
     private CheckBox _http3Upstream = null!;
     private CheckBox _validateUpstreamCertificates = null!;
+    private CheckBox _analyticsEnabled = null!;
 
     public ConfigurationsDialog(ProxyOptions options, bool captureOnStartup, string captureScope,
-        bool wheelZoom,
-        Action trustRoot, Action removeTrustedRoot, Action exportRoot, Action openCertificateFolder)
+        bool wheelZoom, bool analyticsEnabled,
+        Action trustRoot, Action removeTrustedRoot, Action exportRoot, Action openCertificateFolder,
+        Action openAnalyticsFolder)
     {
         Text = "Configurations";
         StartPosition = FormStartPosition.CenterParent;
@@ -31,6 +33,7 @@ public sealed class ConfigurationsDialog : Form
         var tabs = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
         tabs.TabPages.Add(CreateGeneralPage(captureOnStartup, captureScope, wheelZoom));
         tabs.TabPages.Add(CreateHttpsPage(options, trustRoot, removeTrustedRoot, exportRoot, openCertificateFolder));
+        tabs.TabPages.Add(CreatePrivacyPage(analyticsEnabled, openAnalyticsFolder));
 
         var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Size = new Size(100, 34) };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
@@ -63,6 +66,8 @@ public sealed class ConfigurationsDialog : Form
 
     /// <summary>Whether Ctrl+MouseWheel should resize the UI.</summary>
     public bool WheelZoom => _wheelZoom.Checked;
+
+    public bool AnalyticsEnabled => _analyticsEnabled.Checked;
 
     public string CaptureScope => (_captureScope.SelectedItem as CaptureScopeChoice)?.Value ?? "AllProcesses";
 
@@ -207,6 +212,56 @@ public sealed class ConfigurationsDialog : Form
         actions.Controls[3].Click += (_, _) => openCertificateFolder();
         certificates.Controls.Add(actions);
         panel.Controls.Add(certificates);
+
+        page.Controls.Add(panel);
+        return page;
+    }
+
+
+    /// <summary>
+    /// The permanent home of the usage-reporting switch, and of the button that shows the user the
+    /// actual queued file rather than asking them to take a description of it on trust.
+    /// </summary>
+    private TabPage CreatePrivacyPage(bool analyticsEnabled, Action openAnalyticsFolder)
+    {
+        var page = new TabPage("Privacy");
+        var panel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            Padding = new Padding(16),
+        };
+
+        _analyticsEnabled = AddOption(panel, "Send anonymous feedback", analyticsEnabled,
+            "Sends which features you use, the type of any error, and the app version, tied only to a "
+            + "random installation ID. Never sends captured traffic, URLs, hostnames, headers, bodies, "
+            + "cookies, certificates, or your settings. Turning this off also deletes the installation ID "
+            + "and discards anything not yet sent.",
+            descriptionMaxWidth: 560);
+
+        var queued = new GroupBox
+        {
+            Text = "Pending feedback",
+            Width = 590,
+            Height = 96,
+            Margin = new Padding(0, 14, 0, 0),
+        };
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(8) };
+        var note = new Label
+        {
+            Text = "Reports wait in a plain text file you can read before they are sent.",
+            AutoSize = true,
+            ForeColor = Palette.TextDim,
+            Margin = new Padding(0, 6, 0, 8),
+        };
+        var open = new Button { Text = "Open reports folder", AutoSize = true };
+        open.Click += (_, _) => openAnalyticsFolder();
+        actions.Controls.Add(note);
+        actions.Controls.Add(open);
+        queued.Controls.Add(actions);
+        panel.Controls.Add(queued);
 
         page.Controls.Add(panel);
         return page;

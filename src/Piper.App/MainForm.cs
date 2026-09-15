@@ -5,12 +5,14 @@ using Piper.App.Theme;
 using Piper.Core.Proxy;
 using Piper.Core.Security;
 using Piper.Core.Sessions;
+using Piper.Core.Telemetry;
 
 namespace Piper.App;
 
 public sealed class MainForm : Form, IMessageFilter
 {
     private readonly SessionStore _store = new();
+    private bool _reportedFirstSession;
     private readonly ProxyOptions _options = new();
     private readonly CertificateAuthority _ca;
     private readonly ProxyServer _proxy;
@@ -274,6 +276,8 @@ public sealed class MainForm : Form, IMessageFilter
         if (SystemProxy.RestoreLeftovers() is { } leftover)
             AppendLog($"Restored the system proxy that a previous session left pointing at {leftover}.");
 
+        AskAnalyticsConsentIfNeeded();
+
         if (!EnsureTrustedRootForStartup())
         {
             UpdateCaptureStatus();
@@ -303,6 +307,45 @@ public sealed class MainForm : Form, IMessageFilter
     }
 
     /// <summary>
+    /// Asks, once, whether the user wants to send anonymous feedback. Collection is opt-in and stays
+    /// off unless they say yes here or turn it on later, so declining - or dismissing the dialog
+    /// without reading it - leaves Piper gathering nothing.
+    /// </summary>
+    private void AskAnalyticsConsentIfNeeded()
+    {
+        // A reporting subsystem that failed to start collects nothing, so there is nothing to ask
+        // about - and without this the dialog would return on every launch with no way to settle it.
+        if (Analytics.SpoolPath is null || Analytics.NoticeShown) return;
+
+        var answer = MessageBox.Show(this,
+            "Would you like to send anonymous feedback to help improve Piper?\r\n\r\n"
+            + "What is sent: which features you use, the type of any error, and the app version - tied only "
+            + "to a random installation ID.\r\n\r\n"
+            + "What is never sent: captured traffic, URLs, hostnames, headers, bodies, cookies, certificates, "
+            + "or your settings. Piper's reporting can only send values from a fixed list of words.\r\n\r\n"
+            + "This is off unless you turn it on. You can change it at any time, and read exactly what is "
+            + "queued, under Tools > Configurations > Privacy.",
+            "Collect anonymous feedback?",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+
+        Analytics.SetEnabled(answer == DialogResult.Yes);
+        if (answer == DialogResult.Yes)
+        {
+            // Startup already tried to record this and was correctly refused, reporting being off
+            // at the time. Without replaying it the run in which someone opts in is the one run
+            // missing the first step of its own funnel.
+            Analytics.Track(AnalyticsEvents.AppStarted);
+        }
+
+
+        // Recorded either way: the question is asked once, not repeated until the answer is yes.
+        Analytics.RecordNoticeShown(CurrentVersion.ToString(3));
+        AppendLog(answer == DialogResult.Yes
+            ? "Anonymous feedback is on. Turn it off under Tools > Configurations > Privacy."
+            : "Anonymous feedback is off. Turn it on under Tools > Configurations > Privacy.");
+    }
+
+    /// <summary>
     /// Gives the user an explicit startup choice before enabling capture. Trust installation
     /// changes Windows' certificate store, so it must never happen silently.
     /// </summary>
@@ -328,6 +371,7 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
+            Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "startup"));
             AppendLog($"Root certificate {_ca.RootCertificate.Thumbprint} added to the current user's trusted roots.");
             _closeAfterShutdown = true;
             Application.Restart();
@@ -621,8 +665,9 @@ public sealed class MainForm : Form, IMessageFilter
     private void ShowConfigurations()
     {
         using var dialog = new ConfigurationsDialog(_options, _captureEnabledOnStartup, _captureScope.ToString(),
-            FontScale.WheelEnabled,
-            TrustRootCertificate, UntrustRootCertificate, ExportRootCertificate, OpenCertificateFolder);
+            FontScale.WheelEnabled, Analytics.IsEnabled,
+            TrustRootCertificate, UntrustRootCertificate, ExportRootCertificate, OpenCertificateFolder,
+            OpenAnalyticsFolder);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         dialog.ApplyTo(_options);
@@ -637,6 +682,14 @@ public sealed class MainForm : Form, IMessageFilter
         ProxyConfigurationSettingsStore.Save(ProxyConfigurationSettings.From(_options));
         FontScale.WheelEnabled = dialog.WheelZoom;
         SaveFontScaleSettings();
+        if (dialog.AnalyticsEnabled != Analytics.IsEnabled)
+        {
+            Analytics.SetEnabled(dialog.AnalyticsEnabled);
+            AppendLog(dialog.AnalyticsEnabled
+                ? "Anonymous feedback is on."
+                : "Anonymous feedback is off. The installation ID and any pending reports were discarded.");
+        }
+
         AppendLog("Configurations saved. HTTPS protocol changes apply to new connections.");
         if (!_options.ValidateUpstreamCertificates)
             AppendLog("Origin server certificate verification is OFF. Piper cannot tell a real origin from "
@@ -645,6 +698,7 @@ public sealed class MainForm : Form, IMessageFilter
 
     private void ShowHosts()
     {
+        Analytics.Track(AnalyticsEvents.FeatureUsed, (AnalyticsProperties.Feature, "hosts"));
         using var dialog = new HostsDialog(_options.HostRemapping.Export());
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -653,6 +707,24 @@ public sealed class MainForm : Form, IMessageFilter
         AppendLog(_options.HostRemapping.Enabled
             ? "Host remapping enabled. New origin connections will use the configured mappings."
             : "Host remapping disabled.");
+    }
+
+    /// <summary>
+    /// Opens the folder holding the pending-report file, so "here is what we send" is something the
+    /// user can check rather than something they have to believe.
+    /// </summary>
+    private void OpenAnalyticsFolder()
+    {
+        var folder = AnalyticsSettingsStore.DefaultSpoolDirectory;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OpenCertificateFolder()
@@ -709,6 +781,11 @@ public sealed class MainForm : Form, IMessageFilter
                 foreach (var session in result.Sessions) _store.Add(session);
             }
 
+            Analytics.Track(
+                AnalyticsEvents.FeatureUsed,
+                (AnalyticsProperties.Feature, "session_import"),
+                (AnalyticsProperties.Format, isComposerImport ? "raz" : "saz"),
+                (AnalyticsProperties.Count, Analytics.CountBucket(result.Sessions.Count)));
             AppendLog($"Imported {result.Sessions.Count:N0} session(s) from {Path.GetFileName(path)}" +
                 (isComposerImport ? " into Composer History." : "."));
             foreach (var warning in result.Warnings)
@@ -1027,9 +1104,11 @@ public sealed class MainForm : Form, IMessageFilter
         {
             _proxy.Start();
             UpdateCaptureStatus();
+            Analytics.Track(AnalyticsEvents.CaptureStarted, (AnalyticsProperties.Result, "ok"));
         }
         catch (Exception ex)
         {
+            Analytics.TrackError("capture_start", ex);
             // Reported in the log and the status bar rather than a dialog, so a busy port
             // never blocks the UI and the full exception stays available for diagnosis.
             AppendLog($"Could not listen on 127.0.0.1:{_options.Port} - {ex.GetType().Name}: {ex.Message}");
@@ -1221,6 +1300,7 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
+            Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
             AppendLog($"Root certificate {_ca.RootCertificate.Thumbprint} added to the current user's trusted roots.");
         }
         catch (Exception ex)
@@ -1547,6 +1627,14 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateSessionsStatus()
     {
         var total = _store.Count;
+        if (total > 0 && !_reportedFirstSession)
+        {
+            // Completes the activation funnel: installed, trusted, capturing, and now actually
+            // seeing traffic. Reported once per run, and only ever as the fact that it happened.
+            _reportedFirstSession = true;
+            Analytics.Track(AnalyticsEvents.FirstSessionCaptured);
+        }
+
         var selected = _sessionList.SelectedSessionCount;
         _sessionsLabel.Text = selected == 0
             ? $"{total:N0} sessions"
