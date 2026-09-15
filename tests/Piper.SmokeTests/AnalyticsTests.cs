@@ -619,7 +619,7 @@ internal static class AnalyticsTests
             runner.IsTrue(temp.Settings.InstallId is null, "and the installation id with it");
         });
 
-        await runner.RunAsync("analytics: a permanently refused event does not block the queue", async () =>
+        await runner.RunAsync("analytics: a refused event is never counted as delivered", async () =>
         {
             using var server = new LoopbackCollector(statusCode: 404);
             using var temp = new TempAnalytics();
@@ -631,10 +631,31 @@ internal static class AnalyticsTests
             client.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
             await client.FlushAsync();
 
-            // A refusal that will repeat forever is dropped rather than retried until the end of
-            // time with every later event stuck behind it.
-            runner.AreEqual(2, server.RequestCount, "both events were attempted");
-            runner.IsTrue(!File.Exists(temp.SpoolPath + ".sending"), "and neither is left blocking the queue");
+            // A wrong contract - an event name or app type the collector will not take - looks
+            // exactly like this. Treating the refusal as delivery would bin the events, clear the
+            // backoff, and leave Piper making a request per event per flush forever while throwing
+            // all of them away, with an empty spool reading as everything working.
+            runner.AreEqual(1, server.RequestCount, "delivery stops at the refusal instead of marching on");
+            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "the refused events are kept, not discarded");
+            runner.AreEqual(2, File.ReadAllLines(temp.SpoolPath + ".sending").Count(l => l.Length > 0), "both of them");
+        });
+
+        await runner.RunAsync("analytics: a collector that refuses everything stops being called", async () =>
+        {
+            using var server = new LoopbackCollector(statusCode: 400);
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+            using var client = temp.CreateClient(server.Endpoint);
+
+            client.Track(AnalyticsEvents.AppStarted);
+
+            // Backoff alone would still mean a request every 30 minutes from every opted-in machine
+            // for a contract that is never going to work, so a long run of refusals ends it.
+            for (var attempt = 0; attempt < 40; attempt++) await client.FlushAsync();
+
+            runner.IsTrue(server.RequestCount <= 20, $"stopped after a bounded number of refusals, made {server.RequestCount}");
+            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "and the events stay on disk as evidence");
         });
 
         await runner.RunAsync("analytics: a non-loopback endpoint must be https", () =>

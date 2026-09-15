@@ -56,6 +56,13 @@ public sealed class AnalyticsClient : IDisposable
     /// <summary>Events delivered per flush, and therefore requests made per flush.</summary>
     private const int MaxBatchEvents = 200;
 
+    /// <summary>
+    /// Rejections in a row, with nothing delivered between them, before this run stops trying. A
+    /// collector that refuses every report is telling us the contract is wrong; continuing would be
+    /// one request per event per flush from every opted-in machine, for nothing.
+    /// </summary>
+    private const int MaxConsecutiveRejections = 20;
+
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
@@ -93,6 +100,8 @@ public sealed class AnalyticsClient : IDisposable
 
     private int _queued;
     private int _consecutiveFailures;
+    private int _consecutiveRejections;
+    private bool _deliveryStopped;
     private DateTimeOffset _nextAttempt = DateTimeOffset.MinValue;
     private Task? _pump;
     private bool _disposed;
@@ -263,7 +272,7 @@ public sealed class AnalyticsClient : IDisposable
         // Two independent gates, both of which must be open: the user asked for this, and they were
         // actually asked. Neither alone is enough to justify a request leaving the machine.
         if (!_settings.Enabled || string.IsNullOrEmpty(_settings.NoticeShownVersion)) return;
-        if (DateTimeOffset.UtcNow < _nextAttempt) return;
+        if (_deliveryStopped || DateTimeOffset.UtcNow < _nextAttempt) return;
 
         AnalyticsEvent[] batch;
         lock (_spoolLock)
@@ -280,14 +289,30 @@ public sealed class AnalyticsClient : IDisposable
         // opts out while a flush is in flight has the rest of the batch stopped mid-way, which is
         // what the dialog promises. Without this, a claimed batch finishes regardless.
         var delivered = 0;
-        while (delivered < batch.Length
-            && _settings.Enabled
-            && await TryDeliverAsync(batch[delivered], cancellationToken).ConfigureAwait(false))
+        var rejected = false;
+        while (delivered < batch.Length && _settings.Enabled)
         {
-            delivered++;
+            var outcome = await TryDeliverAsync(batch[delivered], cancellationToken).ConfigureAwait(false);
+            if (outcome == Delivery.Sent)
+            {
+                delivered++;
+                _consecutiveRejections = 0;
+                continue;
+            }
+
+            rejected = outcome == Delivery.Rejected;
+            break;
         }
 
-        if (delivered == batch.Length)
+        if (rejected && ++_consecutiveRejections >= MaxConsecutiveRejections)
+        {
+            // Nothing has been accepted for a long run of attempts. Stop for the rest of this
+            // process and leave the spool where it is: the events stay on disk as evidence, which is
+            // the difference between a contract that is wrong and a product nobody opted into.
+            _deliveryStopped = true;
+        }
+
+        if (delivered == batch.Length && !rejected)
         {
             _consecutiveFailures = 0;
             _nextAttempt = DateTimeOffset.MinValue;
@@ -567,40 +592,56 @@ public sealed class AnalyticsClient : IDisposable
     /// Sends one event as a Counter request, matching the collector the CurseForge apps already
     /// report to: the event name, the machine identifier, and the rest as a JSON <c>Extra</c> value.
     /// </summary>
-    private async Task<bool> TryDeliverAsync(AnalyticsEvent recorded, CancellationToken cancellationToken)
+    /// <summary>What happened to one event. Refusal is deliberately not success.</summary>
+    private enum Delivery
+    {
+        Sent,
+
+        /// <summary>The collector refused it and will refuse it again - a wrong name or path.</summary>
+        Rejected,
+
+        /// <summary>Transport or server-side trouble that may not recur.</summary>
+        Failed,
+    }
+
+    private async Task<Delivery> TryDeliverAsync(AnalyticsEvent recorded, CancellationToken cancellationToken)
     {
         try
         {
             var url = BuildCounterUrl(recorded);
-            if (url is null) return true; // Unsendable, and retrying will not change that. Drop it.
+
+            // Nothing can make this event sendable, and it is Piper's own doing rather than the
+            // collector's, so it is dropped without counting against the contract.
+            if (url is null) return Delivery.Sent;
 
             // Headers only: nothing here reads the body, and buffering one from a third-party
             // endpoint is an attacker-controlled amount of memory per event.
             using var response = await _http
                 .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
-            if (response.IsSuccessStatusCode) return true;
+            if (response.IsSuccessStatusCode) return Delivery.Sent;
 
-            // A refusal the collector will repeat forever - a bad name, a wrong path - would
-            // otherwise block every event queued behind it for the life of the install. Retrying is
-            // only worth it when the failure might not recur.
-            var permanent = (int)response.StatusCode is >= 400 and < 500
-                and not 408 and not 429;
-            return permanent;
+            // A refusal is not a delivery. Reporting one as success would delete the events, clear
+            // the backoff, and leave Piper making a request per event per flush on every opted-in
+            // machine while discarding all of them - with an empty spool reading as everything
+            // working, and no way to tell a wrong contract from nobody having opted in.
+            return (int)response.StatusCode is >= 400 and < 500 and not 408 and not 429
+                ? Delivery.Rejected
+                : Delivery.Failed;
         }
         catch (HttpRequestException)
         {
-            return false;
+            return Delivery.Failed;
         }
         catch (ObjectDisposedException)
         {
             // Dispose tore down the transport mid-send; the batch stays on disk for the next run.
-            return false;
+            return Delivery.Failed;
         }
         catch (TaskCanceledException)
         {
             // Covers the client timeout as well as shutdown; either way the spool keeps the event.
-            return false;
+            return Delivery.Failed;
         }
     }
 

@@ -63,12 +63,19 @@ public static class AnalyticsSettingsStore
         }
     }
 
+    /// <summary>
+    /// Three small fields, so anything beyond this is not a settings file Piper wrote. Reading it
+    /// would otherwise be the one unbounded read on the launch path, where an OutOfMemoryException
+    /// escapes every catch and costs the user the application rather than the setting.
+    /// </summary>
+    private const long MaxSettingsBytes = 64 * 1024;
+
     public static AnalyticsSettings? Load(string? path = null)
     {
         path ??= DefaultPath;
         try
         {
-            if (!File.Exists(path)) return null;
+            if (!File.Exists(path) || new FileInfo(path).Length > MaxSettingsBytes) return null;
             return JsonSerializer.Deserialize<AnalyticsSettings>(File.ReadAllText(path));
         }
         catch (IOException)
