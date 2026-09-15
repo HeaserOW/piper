@@ -82,6 +82,15 @@ public sealed class AnalyticsClient : IDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private readonly HttpClient _http;
 
+    /// <summary>Raw line index in the in-flight file of each event in the last claimed batch.</summary>
+    private int[] _batchLines = [];
+
+    /// <summary>Lines of the in-flight file the last claim consumed, parsed or skipped.</summary>
+    private int _claimedLines;
+
+    /// <summary>Whether the last claim stopped at the batch cap with lines still unread.</summary>
+    private bool _claimStoppedEarly;
+
     private int _queued;
     private int _consecutiveFailures;
     private DateTimeOffset _nextAttempt = DateTimeOffset.MinValue;
@@ -284,7 +293,11 @@ public sealed class AnalyticsClient : IDisposable
             _nextAttempt = DateTimeOffset.MinValue;
             lock (_spoolLock)
             {
-                DiscardInflight();
+                // A claim that stopped at the cap leaves unread lines behind it. Deleting the file
+                // would destroy them unsent and uncounted, which is reachable in exactly the case
+                // the spool exists for: a long offline stretch, then one flush when it recovers.
+                if (_claimStoppedEarly) DropInflightPrefix(_claimedLines);
+                else DiscardInflight();
             }
         }
         else
@@ -294,10 +307,11 @@ public sealed class AnalyticsClient : IDisposable
             {
                 lock (_spoolLock)
                 {
-                    // An opt-out during the request already deleted the spool; re-creating it here
-                    // would resurrect those events and ship them if reporting is ever switched on
-                    // again. Honour the newer decision.
-                    if (_settings.Enabled) RewriteInflight(batch.Skip(delivered));
+                    // Removed by the line the first undelivered event came from, so everything after
+                    // it survives untouched - the events that were not sent, and any lines the claim
+                    // never reached. An opt-out during the request already deleted the spool;
+                    // putting anything back would resurrect it, so honour the newer decision.
+                    if (_settings.Enabled) DropInflightPrefix(_batchLines[delivered]);
                     else DiscardInflight();
                 }
             }
@@ -365,6 +379,15 @@ public sealed class AnalyticsClient : IDisposable
         {
             if (!File.Exists(_spoolPath) || new FileInfo(_spoolPath).Length <= MaxSpoolBytes) return;
 
+            // Same ceiling the claim path applies, and for the same reason: this runs before any
+            // other guard gets a chance to look at the file, so without it an arbitrarily large
+            // spool becomes an arbitrarily large allocation on the pump thread.
+            if (new FileInfo(_spoolPath).Length > MaxInflightBytes)
+            {
+                File.Delete(_spoolPath);
+                return;
+            }
+
             var lines = File.ReadAllLines(_spoolPath);
             var keep = lines.Skip(lines.Length / 2).ToArray();
             File.WriteAllText(_spoolPath, keep.Length == 0 ? string.Empty : string.Join('\n', keep) + "\n");
@@ -414,13 +437,23 @@ public sealed class AnalyticsClient : IDisposable
             }
 
             var batch = new List<AnalyticsEvent>();
+            var origins = new List<int>();
+            var consumed = 0;
+            var stoppedEarly = false;
 
             // Enumerated lazily and capped: the batch length is the number of outbound requests one
             // flush makes, so leaving it open-ended lets the contents of a file decide how much
-            // traffic Piper generates.
+            // traffic Piper generates. Where each event came from is recorded alongside it, because
+            // the file can outlive the batch and must never be removed wholesale.
             foreach (var line in File.ReadLines(_inflightPath))
             {
-                if (batch.Count >= MaxBatchEvents) break;
+                if (batch.Count >= MaxBatchEvents)
+                {
+                    stoppedEarly = true;
+                    break;
+                }
+
+                consumed++;
                 if (string.IsNullOrWhiteSpace(line) || line.Length > MaxSpoolLineLength) continue;
 
                 AnalyticsEvent? parsed;
@@ -449,8 +482,16 @@ public sealed class AnalyticsClient : IDisposable
                     properties,
                     parsed.Timestamp,
                     AnalyticsSchema.SanitiseValue(parsed.RunId));
-                if (revalidated is not null) batch.Add(revalidated);
+                if (revalidated is not null)
+                {
+                    batch.Add(revalidated);
+                    origins.Add(consumed - 1);
+                }
             }
+
+            _batchLines = origins.ToArray();
+            _claimedLines = consumed;
+            _claimStoppedEarly = stoppedEarly;
 
             if (batch.Count == 0)
             {
@@ -493,18 +534,29 @@ public sealed class AnalyticsClient : IDisposable
         }
     }
 
-    /// <summary>Replaces the in-flight file with what is left to send. Caller holds the lock.</summary>
-    private void RewriteInflight(IEnumerable<AnalyticsEvent> remaining)
+    /// <summary>
+    /// Removes the first <paramref name="lines"/> lines of the in-flight file, keeping everything
+    /// after them byte for byte. Caller holds <see cref="_spoolLock"/>.
+    /// </summary>
+    private void DropInflightPrefix(int lines)
     {
         try
         {
-            var lines = remaining.Select(recorded => JsonSerializer.Serialize(recorded));
-            File.WriteAllText(_inflightPath, string.Join('\n', lines) + "\n");
+            if (!File.Exists(_inflightPath)) return;
+
+            var remaining = File.ReadLines(_inflightPath).Skip(lines).ToList();
+            if (remaining.Count == 0)
+            {
+                File.Delete(_inflightPath);
+                return;
+            }
+
+            File.WriteAllLines(_inflightPath, remaining);
         }
         catch (IOException)
         {
-            // The batch stays as it was, so the retry re-sends events the collector already has.
-            // Duplicates are the acceptable failure here; losing the rest of the batch is not.
+            // The file stays as it was, so the retry re-sends events the collector already has.
+            // Duplicates are the acceptable failure here; losing the remainder is not.
         }
         catch (UnauthorizedAccessException)
         {

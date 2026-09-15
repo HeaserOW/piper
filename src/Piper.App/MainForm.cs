@@ -320,9 +320,9 @@ public sealed class MainForm : Form, IMessageFilter
         bool optedIn;
         using (var dialog = new AnalyticsConsentDialog())
         {
-            // The answer is the checkbox, not the dialog result: closing the window with the X or
-            // pressing Escape leaves it unticked, which is a decline rather than an unanswered
-            // question, and is recorded as such below.
+            // The dialog result is the answer: only the accept button yields OK, so Escape, the
+            // window's X and the decline button all arrive here as a refusal rather than as an
+            // unanswered question, and are recorded as such below.
             dialog.ShowDialog(this);
             optedIn = dialog.AnalyticsEnabled;
         }
@@ -691,6 +691,11 @@ public sealed class MainForm : Form, IMessageFilter
             // Reporting that failed to start cannot be switched on, and SetEnabled is a no-op then.
             // Logging success regardless would tell the user the opposite of the truth about a
             // privacy control, and the setting would be back to its old value next time they look.
+            // Replayed for the same reason the consent dialog replays it: startup recorded this and
+            // was correctly refused while reporting was off, so without it a run where someone opts
+            // in from here is missing the first step of its own funnel.
+            if (dialog.AnalyticsEnabled) Analytics.Track(AnalyticsEvents.AppStarted);
+
             AppendLog(Analytics.SpoolPath is null
                 ? "Anonymous feedback could not be changed: reporting failed to start for this session."
                 : dialog.AnalyticsEnabled
@@ -1635,7 +1640,11 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateSessionsStatus()
     {
         var total = _store.Count;
-        if (total > 0 && !_reportedFirstSession && _store.Snapshot().Any(session => !session.IsUpdateCheck))
+        // Reporting is checked before the scan, not after: a user who declined should not pay for
+        // copying the session store, and the latch must not close while reporting is off - otherwise
+        // someone who opts in mid-run could never report this step for the rest of the run.
+        if (total > 0 && !_reportedFirstSession && Analytics.IsEnabled
+            && _store.Snapshot().Any(session => !session.IsUpdateCheck))
         {
             // Completes the activation funnel: installed, trusted, capturing, and now actually
             // seeing traffic. Reported once per run, and only ever as the fact that it happened.

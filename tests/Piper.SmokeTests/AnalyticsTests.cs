@@ -577,6 +577,17 @@ internal static class AnalyticsTests
             // The batch length is the number of outbound requests, so the contents of a file must
             // not decide how much traffic one flush generates.
             runner.IsTrue(server.RequestCount is > 0 and <= 200, $"capped at 200 requests, made {server.RequestCount}");
+
+            // Capping the requests must not cost the events behind the cap: the claim takes the whole
+            // file, so deleting it on success would destroy them unsent.
+            var left = File.Exists(temp.SpoolPath + ".sending")
+                ? File.ReadAllLines(temp.SpoolPath + ".sending").Count(l => !string.IsNullOrWhiteSpace(l))
+                : 0;
+            runner.AreEqual(1_000 - server.RequestCount, left, "everything past the cap is still on disk");
+
+            // And the next flush picks up where this one stopped.
+            await client.FlushAsync();
+            runner.IsTrue(server.RequestCount > 200, $"the remainder drains on later flushes, now {server.RequestCount}");
         });
 
         await runner.RunAsync("analytics: opting out forgets the identifier that is actually sent", async () =>
