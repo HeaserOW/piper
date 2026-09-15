@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Security;
+using System.Security.Principal;
 using System.Windows.Forms;
 using Piper.App.Controls;
 using Piper.App.Theme;
@@ -240,6 +244,14 @@ public sealed class MainForm : Form, IMessageFilter
 
         Palette.Apply(this);
         UpdateZoomStatus();
+        AppendLog(DescribeEnvironment());
+        // Windows refuses drags from an unelevated Explorer to an elevated window and reports
+        // nothing to either side, so an elevated run has to be visible in the log before a
+        // "drag and drop does nothing" report can be read.
+        if (IsElevated())
+            AppendLog("Piper is running elevated. Windows blocks drag-and-drop from a normal "
+                + "Explorer window into an elevated one; restart Piper without administrator "
+                + "rights if dropping a .saz file does nothing.");
         AppendLog($"Root CA: {_ca.RootPfxPath}");
         AppendLog(TrustStore.IsTrusted(_ca.RootCertificate)
             ? "Root CA is trusted by the current user. HTTPS decryption will work."
@@ -310,6 +322,12 @@ public sealed class MainForm : Form, IMessageFilter
     private bool EnsureTrustedRootForStartup()
     {
         if (TrustStore.IsTrusted(_ca.RootCertificate)) return true;
+
+        // Worth a line of its own: this dialog is modal, so while it is up the main window is
+        // disabled and refuses every drop. That reads as "drag and drop is broken" to a user who
+        // has not noticed the prompt, and it is what a fresh install shows on first run.
+        AppendLog("Showing the root certificate trust prompt. The main window is disabled, and "
+            + "will ignore dropped files, until it is answered.");
 
         var answer = MessageBox.Show(this,
             "Piper's HTTPS inspection certificate is not trusted by Windows.\r\n\r\n"
@@ -405,7 +423,47 @@ public sealed class MainForm : Form, IMessageFilter
     private void OnSazFileDragDrop(object? sender, DragEventArgs e)
     {
         var paths = SazFilesFrom(e.Data);
-        if (paths.Length > 0) ImportSazFiles(paths);
+        if (paths.Length > 0)
+        {
+            ImportSazFiles(paths);
+            return;
+        }
+
+        // A refused file drop used to do nothing at all: no cursor feedback while dragging and no
+        // trace afterwards, which is indistinguishable from the window ignoring the mouse. Say why
+        // it was refused, because the answer is usually the drag source rather than the file.
+        // Every control is registered for both drags, so a session dropped on the Composer or the
+        // AutoResponder reaches here too. That one is handled elsewhere and is not a refusal.
+        if (e.Data?.GetData(typeof(Session)) is Session) return;
+        AppendLog($"Ignored a drop: {DescribeRefusedDrop(e.Data)}");
+    }
+
+    /// <summary>
+    /// Why a drop carried nothing importable. Only file names are recorded, never directories: the
+    /// log is meant to be exported, and the path a user keeps captures in is not ours to publish.
+    /// </summary>
+    private static string DescribeRefusedDrop(IDataObject? data)
+    {
+        if (data is null) return "the drop carried no data.";
+
+        var formats = data.GetFormats();
+        if (data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
+        {
+            // Outlook, 7-Zip, Teams and browser download shelves hand over virtual files
+            // (FileGroupDescriptor) that have no path on disk, so there is nothing to open.
+            return formats.Length == 0
+                ? "the drop carried no recognised format."
+                : $"no dropped file, only {string.Join(", ", formats)}. Drag the .saz from a folder "
+                    + "window; a file dragged straight out of mail, an archive viewer or a browser "
+                    + "has not been written to disk yet.";
+        }
+
+        var rejected = paths.Select(path => Path.GetFileName(path) switch
+        {
+            var name when !File.Exists(path) => $"{name} (not on disk)",
+            var name => $"{name} (not a .saz or .raz file)",
+        });
+        return $"dropped {paths.Length} file(s), none importable: {string.Join(", ", rejected)}.";
     }
 
     /// <summary>
@@ -480,6 +538,8 @@ public sealed class MainForm : Form, IMessageFilter
         _checkForUpdatesMenuItem = new ToolStripMenuItem("Check for &updates...", null,
             async (_, _) => await CheckForUpdatesAsync(manual: true));
         help.DropDownItems.Add(_checkForUpdatesMenuItem);
+        help.DropDownItems.Add(new ToolStripSeparator());
+        help.DropDownItems.Add("Save &diagnostics for a bug report...", null, (_, _) => SaveDiagnostics());
         help.DropDownItems.Add(new ToolStripSeparator());
         help.DropDownItems.Add("&About", null, (_, _) => MessageBox.Show(this,
             "Piper\r\n\r\nAn HTTP(S) debugging proxy written from scratch on .NET 10.",
@@ -688,8 +748,19 @@ public sealed class MainForm : Form, IMessageFilter
     /// appends its requests to the Composer's persisted history, alongside what's already there.</summary>
     public async void ImportSazFiles(IEnumerable<string> filePaths)
     {
-        var paths = filePaths.Where(SazFileRelay.IsSazFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (paths.Length == 0) return;
+        var requested = filePaths.ToArray();
+        var paths = requested.Where(SazFileRelay.IsSazFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (paths.Length == 0)
+        {
+            // Silence here covers a file association, a command line and a drop alike, so the
+            // reason one of them produced nothing has to be written down. File names only: the
+            // directory a user keeps captures in does not belong in an exported log.
+            if (requested.Length > 0)
+                AppendLog("No SAZ file to import from "
+                    + $"{string.Join(", ", requested.Select(Path.GetFileName))}: a capture must be an "
+                    + "existing .saz or .raz file.");
+            return;
+        }
 
         BringToFront();
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
@@ -1531,8 +1602,87 @@ public sealed class MainForm : Form, IMessageFilter
     private void AppendLog(string message)
     {
         var line = $"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}";
-        if (_logView.TextLength > 200_000) _logView.Clear();
+        // Drop the oldest half rather than clearing. A long-running session used to reach the cap
+        // and throw away every line, which left the diagnostics export empty for exactly the users
+        // whose problem took hours to show up.
+        if (_logView.TextLength > LogCharacterCap)
+        {
+            var kept = _logView.Text[(_logView.TextLength - (LogCharacterCap / 2))..];
+            var firstLine = kept.IndexOf(Environment.NewLine, StringComparison.Ordinal);
+            _logView.Text = firstLine < 0 ? kept : kept[(firstLine + Environment.NewLine.Length)..];
+        }
         _logView.AppendText(line);
+    }
+
+    private const int LogCharacterCap = 200_000;
+
+    /// <summary>
+    /// One line of machine state, logged at startup so that every exported diagnostics bundle
+    /// carries it. Deliberately state only - no listening port, upstream proxy, host remapping or
+    /// rule text - because this text is written to a file the user sends on to someone else.
+    /// </summary>
+    private string DescribeEnvironment() =>
+        $"Piper {typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "unknown"} on "
+        + $"{Environment.OSVersion.VersionString} ({RuntimeInformation.OSArchitecture}), "
+        + $".NET {Environment.Version}, {(Environment.Is64BitProcess ? "64-bit" : "32-bit")} process, "
+        + $"elevated: {(IsElevated() ? "yes" : "no")}, "
+        + $"display scale: {DeviceDpi * 100 / 96}%, culture: {CultureInfo.CurrentCulture.Name}.";
+
+    /// <summary>
+    /// Whether this process runs with administrator rights. Reported, never acted on: Piper has no
+    /// reason to elevate itself, and an elevated run is a symptom rather than a setting.
+    /// </summary>
+    private static bool IsElevated()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch (SecurityException)
+        {
+            // An identity Piper may not query is not an identity Piper can call elevated.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Writes the log, the crash log and the machine summary to a zip the user chooses, for
+    /// attaching to a bug report. Nothing captured goes in it - see <see cref="DiagnosticsBundle"/>.
+    /// </summary>
+    private void SaveDiagnostics()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Save diagnostics for a bug report",
+            Filter = "Zip archives (*.zip)|*.zip|All files (*.*)|*.*",
+            DefaultExt = "zip",
+            AddExtension = true,
+            FileName = $"piper-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.zip",
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        // Logged before the write so that the bundle records the export that produced it.
+        AppendLog($"Writing diagnostics to {Path.GetFileName(dialog.FileName)}.");
+        try
+        {
+            using (var file = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None))
+                DiagnosticsBundle.Write(file, DescribeEnvironment(), _logView.Text, Program.CrashLogPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppendLog($"Could not write the diagnostics file: {ex.Message}");
+            MessageBox.Show(this, $"Piper could not write the diagnostics file.\r\n\r\n{ex.Message}",
+                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        MessageBox.Show(this,
+            $"Saved {Path.GetFileName(dialog.FileName)}.\r\n\r\n"
+            + $"It contains {DiagnosticsBundle.Contents}: Piper's own messages and a summary of this "
+            + "machine. No captured requests, responses, cookies, certificates or proxy settings are "
+            + "included, but read it before sending it on.",
+            "Diagnostics saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void UpdateStatus()

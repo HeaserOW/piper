@@ -341,6 +341,22 @@ GitHub. Piper verifies the installer hash before starting it, then closes so the
 replace the running executable. Update checks send only the normal Piper user-agent and do not
 send captured traffic or telemetry.
 
+## Reporting a problem
+
+The **Log** tab records what Piper is doing to itself: startup state, refused file drops, SAZ
+imports, capture and certificate decisions. **Help > Save diagnostics for a bug report...** writes
+that log, a summary of the machine and the tail of the local crash log to a zip you choose.
+
+The bundle contains no captured requests, responses, bodies, cookies, certificates or proxy
+configuration, and Piper never uploads it — attach it to a report yourself, after reading it.
+
+If dropping a `.saz` file onto the window does nothing, the log usually names the reason:
+
+- a modal prompt (the root-certificate question on first run) is open, which disables the window
+- Piper is running elevated, so Windows blocks drags from a normal Explorer window
+- the file came from mail, an archive viewer or a browser download shelf and has no path on disk
+  yet — save it to a folder first
+
 ## Releasing
 
 Set the `<Version>` in `src/Piper.App/Piper.App.csproj`, commit it, then create and push a
