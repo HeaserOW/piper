@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 
@@ -14,8 +15,8 @@ namespace Piper.App;
 /// <item>Nested objects addressed by a dotted key -- <c>T("menu.file")</c>.</item>
 /// <item>Interpolation -- <c>"replace this {{value}}"</c>.</item>
 /// <item>Formatting -- <c>"{{count, N0}}"</c>. i18next names a registered formatter there; the
-/// formatter here is .NET composite formatting, so the name <em>is</em> the format string and
-/// <c>N0</c>, <c>HH:mm:ss</c> and <c>X</c> all work. Values format under
+/// formatter here is .NET formatting, so the name <em>is</em> the format specifier and <c>N0</c>,
+/// <c>HH:mm:ss</c> and <c>X</c> all work. Values format under
 /// <see cref="CultureInfo.CurrentCulture"/>, as the interpolated strings they replaced did.</item>
 /// <item>Nesting -- <c>"$t(common.allFilesFilter)"</c> splices another entry in, which is what the
 /// previous <c>const</c> concatenation did.</item>
@@ -31,6 +32,11 @@ namespace Piper.App;
 /// of the assembly and not an external file that could be edited, replaced, or truncated between
 /// builds -- a translation file read from disk would be attacker-controlled input on a shared
 /// machine, and every string here ends up in a dialog, a menu, or a log line.
+///
+/// The capture grid resolves several entries per visible row on every refresh, so substitution
+/// runs through <see cref="DefaultInterpolatedStringHandler"/> -- the same pooled machinery the
+/// compiler emits for an interpolated string -- rather than a <see cref="StringBuilder"/>, and a
+/// plain label is handed back from the cache without touching either.
 /// </remarks>
 internal static class I18n
 {
@@ -40,12 +46,12 @@ internal static class I18n
     private static readonly Dictionary<string, string> Catalogue = Load();
 
     /// <summary>
-    /// Templates parsed into segments, built on first use. Row rendering asks for the same handful
-    /// of keys several times a second, so re-scanning a template per call would put string parsing
-    /// on the paint path. Concurrent because update checks resolve their own messages on a worker
-    /// thread while the UI thread is drawing.
+    /// Templates parsed on first use. Row rendering asks for the same handful of keys several times
+    /// a second, so re-scanning a template per call would put string parsing on the paint path.
+    /// Concurrent because update checks resolve their own messages on a worker thread while the UI
+    /// thread is drawing.
     /// </summary>
-    private static readonly ConcurrentDictionary<string, Segment[]> Templates = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, Template> Templates = new(StringComparer.Ordinal);
 
     /// <summary>Every key in the catalogue. The smoke tests check the typed accessors against it.</summary>
     public static IReadOnlyCollection<string> Keys => Catalogue.Keys;
@@ -56,8 +62,8 @@ internal static class I18n
     /// one way this design can drop text without failing.
     /// </summary>
     public static IEnumerable<string> Placeholders(string key) =>
-        Catalogue.TryGetValue(key, out var template)
-            ? Compile(template, depth: 0).Where(segment => segment.Name is not null).Select(segment => segment.Name!)
+        Catalogue.TryGetValue(key, out var text)
+            ? Compile(text, depth: 0).Segments.Where(s => s.Name is not null).Select(s => s.Name!)
             : [];
 
     /// <summary>
@@ -65,41 +71,34 @@ internal static class I18n
     /// Returns the key itself when it is missing, as i18next does; the smoke tests fail the build
     /// long before that could reach a user.
     /// </summary>
-    public static string T(string key, params (string Name, object? Value)[] values)
+    public static string T(string key, params ReadOnlySpan<(string Name, object? Value)> values)
     {
         var resolved = Plural(key, values);
-        if (!Templates.TryGetValue(resolved, out var segments))
+        if (!Templates.TryGetValue(resolved, out var template))
         {
-            if (!Catalogue.TryGetValue(resolved, out var template)) return key;
-            segments = Templates.GetOrAdd(resolved, Compile(template, depth: 0));
+            if (!Catalogue.TryGetValue(resolved, out var text)) return key;
+            template = Templates.GetOrAdd(resolved, Compile(text, depth: 0));
         }
 
-        // The common case: a constant label with nothing to substitute.
-        if (segments.Length == 1 && segments[0].Name is null) return segments[0].Text!;
+        // A plain label -- most of the catalogue -- needs no work at all.
+        if (template.Constant is { } constant) return constant;
 
-        var builder = new StringBuilder();
-        foreach (var segment in segments)
+        var handler = new DefaultInterpolatedStringHandler(
+            template.LiteralLength, template.PlaceholderCount, CultureInfo.CurrentCulture);
+        foreach (var segment in template.Segments)
         {
-            if (segment.Name is null)
-            {
-                builder.Append(segment.Text);
-                continue;
-            }
-
-            var value = Value(values, segment.Name);
-            builder.Append(segment.Format is null
-                ? value?.ToString()
-                : string.Format(CultureInfo.CurrentCulture, segment.Format, value));
+            if (segment.Name is null) handler.AppendLiteral(segment.Text!);
+            else handler.AppendFormatted(Value(values, segment.Name), segment.Format);
         }
 
-        return builder.ToString();
+        return handler.ToStringAndClear();
     }
 
     /// <summary>
     /// Appends the i18next plural suffix when the caller passed a <c>count</c>. English has the two
     /// categories "one" and "other"; anything that is not exactly one takes "other".
     /// </summary>
-    private static string Plural(string key, (string Name, object? Value)[] values)
+    private static string Plural(string key, ReadOnlySpan<(string Name, object? Value)> values)
     {
         foreach (var (name, value) in values)
         {
@@ -120,7 +119,7 @@ internal static class I18n
         _ => false,
     };
 
-    private static object? Value((string Name, object? Value)[] values, string name)
+    private static object? Value(ReadOnlySpan<(string Name, object? Value)> values, string name)
     {
         foreach (var (candidate, value) in values)
             if (string.Equals(candidate, name, StringComparison.Ordinal)) return value;
@@ -128,13 +127,24 @@ internal static class I18n
     }
 
     /// <summary>A literal run of text, or one <c>{{name}}</c> / <c>{{name, format}}</c> placeholder.</summary>
+    /// <remarks>
+    /// <paramref name="Format"/> is the bare .NET format specifier -- "N0", not "{0:N0}" -- which is
+    /// what <see cref="DefaultInterpolatedStringHandler.AppendFormatted{T}(T, string)"/> wants, so
+    /// nothing has to parse a composite format string per call.
+    /// </remarks>
     private readonly record struct Segment(string? Text, string? Name, string? Format);
+
+    /// <summary>
+    /// A parsed entry. The two counts size the handler's buffer in one go, and
+    /// <paramref name="Constant"/> is set for an entry that substitutes nothing.
+    /// </summary>
+    private sealed record Template(Segment[] Segments, int LiteralLength, int PlaceholderCount, string? Constant);
 
     /// <summary>
     /// Splits a template into literal runs and placeholders, splicing in any <c>$t(other.key)</c>
     /// reference as it goes. A lone brace is literal text, so a message may contain one.
     /// </summary>
-    private static Segment[] Compile(string template, int depth)
+    private static Template Compile(string template, int depth)
     {
         var segments = new List<Segment>();
         var literal = new StringBuilder();
@@ -146,7 +156,7 @@ internal static class I18n
                 // Spliced at compile time: a referenced entry cannot depend on this call's
                 // arguments, so there is nothing to defer to substitution time.
                 literal.Append(Catalogue.TryGetValue(reference.Key, out var value)
-                    ? Flatten(Compile(value, depth + 1))
+                    ? Flatten(Compile(value, depth + 1).Segments)
                     : reference.Key);
                 i = reference.After - 1;
                 continue;
@@ -175,14 +185,17 @@ internal static class I18n
             var comma = body.IndexOf(',');
             segments.Add(comma < 0
                 ? new Segment(null, body.Trim(), null)
-                : new Segment(null, body[..comma].Trim(), "{0:" + body[(comma + 1)..].Trim() + "}"));
+                : new Segment(null, body[..comma].Trim(), body[(comma + 1)..].Trim()));
             i = close + 1;
         }
 
         if (literal.Length > 0 || segments.Count == 0)
             segments.Add(new Segment(literal.ToString(), null, null));
 
-        return [.. segments];
+        var literalLength = segments.Where(s => s.Name is null).Sum(s => s.Text!.Length);
+        var placeholders = segments.Count(s => s.Name is not null);
+        return new Template([.. segments], literalLength, placeholders,
+            placeholders == 0 ? string.Concat(segments.Select(s => s.Text)) : null);
     }
 
     /// <summary>The key inside a <c>$t(...)</c> reference at <paramref name="start"/>, or null.</summary>
@@ -194,7 +207,7 @@ internal static class I18n
         return close < 0 ? null : (template[(start + 3)..close].Trim(), close + 1);
     }
 
-    /// <summary>Renders compiled segments back to template text, so a spliced entry keeps its own placeholders.</summary>
+    /// <summary>Renders segments back to template text, so a spliced entry keeps its own placeholders.</summary>
     private static string Flatten(Segment[] segments)
     {
         var builder = new StringBuilder();
