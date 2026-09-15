@@ -141,7 +141,8 @@ method:POST host:api status:>=400 -is:image body:"order"
 | `Ctrl+X` | clear sessions |
 | `Ctrl+C` | copy selected URLs |
 | `Del` | remove selected sessions |
-| middle-click / double-click | send a session to the Composer |
+| double-click a session | show it in the Inspectors tab |
+| middle-click a session | send it to the Composer |
 | drag a session | drop it anywhere on the Composer or AutoResponder, or onto its tab |
 | `Ctrl+MouseWheel` | resize the UI font |
 | `Ctrl++` / `Ctrl+-` | resize the UI font a step at a time |

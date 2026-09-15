@@ -122,7 +122,8 @@ public sealed class MainForm : Form, IMessageFilter
         };
 
         _rightTabs = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
-        _rightTabs.TabPages.Add(NewPage("Inspectors", _inspector));
+        var inspectorsPage = NewPage("Inspectors", _inspector);
+        _rightTabs.TabPages.Add(inspectorsPage);
         _rightTabs.TabPages.Add(NewPage("Composer", _composer));
         var filtersPage = NewPage("Filters", _filterPanel);
         _rightTabs.TabPages.Add(filtersPage);
@@ -170,11 +171,11 @@ public sealed class MainForm : Form, IMessageFilter
             _composer.LoadSession(session);
         };
         _sessionList.ResendRequested += (_, session) => _ = _composer.ResendAsync(session);
-        _sessionList.SessionActivated += (_, session) =>
-        {
-            _rightTabs.SelectedIndex = 1;
-            _composer.LoadSession(session);
-        };
+        // Double-click means "show me this", so it reveals the inspector the selection has
+        // already been loaded into. Sending the row to the Composer instead made the gesture a
+        // duplicate of middle-click and Ctrl+E, and left no row gesture that brought the
+        // inspector back.
+        _sessionList.SessionActivated += (_, _) => _rightTabs.SelectedTab = inspectorsPage;
 
         // The filterset gets its own visibility slot rather than the grid's ad-hoc filter box.
         // Writing it into FilterText destroyed whatever the user had typed there, and worse, let
