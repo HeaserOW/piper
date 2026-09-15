@@ -165,6 +165,22 @@ public static class Palette
         };
     }
 
+    /// <summary>
+    /// Colour for an HTTP method badge, so a list of requests is scannable by verb the way the
+    /// Result column makes it scannable by status. Reuses the status colours rather than adding a
+    /// second set, so both themes and any future palette edit stay in step -- the two never appear
+    /// in the same column, so sharing them does not make either ambiguous.
+    /// </summary>
+    public static Color ForMethod(string? method) => method?.Trim().ToUpperInvariant() switch
+    {
+        "GET" => StatusOk,
+        "POST" => StatusRedirect,
+        "PUT" or "PATCH" => StatusClientError,
+        "DELETE" => StatusServerError,
+        "HEAD" or "OPTIONS" or "TRACE" => TextDim,
+        _ => Text,
+    };
+
     /// <summary>Walks a control tree applying the palette. Safe to call again after adding children.</summary>
     public static void Apply(Control control)
     {
