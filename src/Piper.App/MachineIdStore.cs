@@ -8,8 +8,9 @@ namespace Piper.App;
 /// survives reinstalls and settings resets and stays the same across Piper versions.
 ///
 /// It lives in <c>HKCU</c> rather than app-data precisely because app-data is what an uninstall or a
-/// "clear my settings" step removes; the registry is also where Piper already reads and writes the
-/// system proxy, so this adds no new kind of access. Nothing here needs administrator rights.
+/// "clear my settings" step removes. Piper already writes elsewhere under <c>HKCU</c> for the system
+/// proxy, so the kind of access is not new even though the key is; nothing here needs administrator
+/// rights.
 ///
 /// Created lazily, and only ever called once reporting is switched on, so a user who declines - or
 /// who never answers the question - never has an identifier written for them at all.
@@ -20,25 +21,30 @@ internal static class MachineIdStore
     private const string ValueName = "MachineId";
 
     /// <summary>
-    /// Removes the stored identifier. Opting out promises the identifier is forgotten, and this is
-    /// the one that actually travels, so a later opt-in starts a new identity that the collector
-    /// cannot join to anything reported before.
+    /// Removes the stored identifier, reporting whether it is now gone. Opting out promises the
+    /// identifier is forgotten, and this is the one that actually travels, so a later opt-in starts
+    /// an identity the collector cannot join to anything reported before - but only if the delete
+    /// succeeded, which is why the caller is told rather than left to assume.
     /// </summary>
-    public static void Delete()
+    public static bool Delete()
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
             key?.DeleteValue(ValueName, throwOnMissingValue: false);
+            return true;
         }
         catch (UnauthorizedAccessException)
         {
+            return false;
         }
         catch (System.Security.SecurityException)
         {
+            return false;
         }
         catch (IOException)
         {
+            return false;
         }
     }
 

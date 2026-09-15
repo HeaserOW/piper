@@ -75,9 +75,13 @@ internal static class Program
                 forgetMachineId: MachineIdStore.Delete));
             Analytics.Track(AnalyticsEvents.AppStarted);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex)
         {
-            // No log yet - the window does not exist - and nothing here is worth interrupting a launch.
+            // Total on purpose, matching the summary above: the filter used to name three exception
+            // types, so anything else - a malformed path, a type initialiser failing while the
+            // allowlists are built - escaped into Main and cost the user the launch because
+            // reporting failed to start. There is no window to log to yet.
+            Debug.WriteLine($"Analytics failed to start: {ex.GetType().Name}");
         }
     }
 

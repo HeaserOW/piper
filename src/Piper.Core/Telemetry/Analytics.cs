@@ -54,8 +54,12 @@ public static class Analytics
     /// <summary>Whether the user has already been told what is collected.</summary>
     public static bool NoticeShown => !string.IsNullOrEmpty(_client?.Settings.NoticeShownVersion);
 
-    /// <summary>Applies the user's choice. Turning it off also discards anything not yet delivered.</summary>
-    public static void SetEnabled(bool enabled) => _client?.SetEnabled(enabled);
+    /// <summary>
+    /// Applies the user's choice. Turning it off also discards anything not yet delivered. Returns
+    /// false if switching off could not erase the stored identifier, so a caller does not claim it
+    /// did.
+    /// </summary>
+    public static bool SetEnabled(bool enabled) => _client?.SetEnabled(enabled) ?? true;
 
     /// <summary>Records that the notice has been shown, which is what unblocks uploading.</summary>
     public static void RecordNoticeShown(string version) => _client?.RecordNoticeShown(version);

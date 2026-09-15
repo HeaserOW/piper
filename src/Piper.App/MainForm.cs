@@ -686,21 +686,24 @@ public sealed class MainForm : Form, IMessageFilter
         SaveFontScaleSettings();
         if (dialog.AnalyticsEnabled != Analytics.IsEnabled)
         {
-            Analytics.SetEnabled(dialog.AnalyticsEnabled);
+            var forgotten = Analytics.SetEnabled(dialog.AnalyticsEnabled);
+
+            // Replayed for the same reason the consent dialog replays it: startup recorded this and
+            // was correctly refused while reporting was off, so without it a run where someone opts
+            // in from here is missing the first step of its own funnel. Reporting it more than once
+            // per run is prevented by the client, not by this call site.
+            if (dialog.AnalyticsEnabled) Analytics.Track(AnalyticsEvents.AppStarted);
 
             // Reporting that failed to start cannot be switched on, and SetEnabled is a no-op then.
             // Logging success regardless would tell the user the opposite of the truth about a
             // privacy control, and the setting would be back to its old value next time they look.
-            // Replayed for the same reason the consent dialog replays it: startup recorded this and
-            // was correctly refused while reporting was off, so without it a run where someone opts
-            // in from here is missing the first step of its own funnel.
-            if (dialog.AnalyticsEnabled) Analytics.Track(AnalyticsEvents.AppStarted);
-
             AppendLog(Analytics.SpoolPath is null
                 ? "Anonymous feedback could not be changed: reporting failed to start for this session."
-                : dialog.AnalyticsEnabled
-                    ? "Anonymous feedback is on."
-                    : "Anonymous feedback is off. The identifiers and any pending reports were discarded.");
+                : dialog.AnalyticsEnabled ? "Anonymous feedback is on."
+                : forgotten
+                    ? "Anonymous feedback is off. The identifiers and any pending reports were discarded."
+                    : "Anonymous feedback is off and nothing more will be collected, but the stored "
+                        + "identifier could not be removed.");
         }
 
         AppendLog("Configurations saved. HTTPS protocol changes apply to new connections.");

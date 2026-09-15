@@ -75,7 +75,7 @@ public sealed class AnalyticsClient : IDisposable
     private readonly string _inflightPath;
     private readonly string? _settingsPath;
     private readonly Func<string?>? _machineId;
-    private readonly Action? _forgetMachineId;
+    private readonly Func<bool>? _forgetMachineId;
     private readonly string _runId = Guid.NewGuid().ToString("n");
     private readonly Lock _spoolLock = new();
 
@@ -98,6 +98,9 @@ public sealed class AnalyticsClient : IDisposable
     /// <summary>Whether the last claim stopped at the batch cap with lines still unread.</summary>
     private bool _claimStoppedEarly;
 
+    /// <summary>Set once the run's start has been reported, so it cannot be reported twice.</summary>
+    private int _appStartedReported;
+
     private int _queued;
     private int _consecutiveFailures;
     private int _consecutiveRejections;
@@ -113,7 +116,7 @@ public sealed class AnalyticsClient : IDisposable
         string? spoolPath = null,
         string? settingsPath = null,
         Func<string?>? machineId = null,
-        Action? forgetMachineId = null)
+        Func<bool>? forgetMachineId = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentException.ThrowIfNullOrEmpty(appVersion);
@@ -160,11 +163,17 @@ public sealed class AnalyticsClient : IDisposable
     /// identifier and discards anything still spooled: a user who turns this off has not agreed to
     /// the delivery of what was collected before they found the switch.
     /// </summary>
-    public void SetEnabled(bool enabled)
+    /// <returns>
+    /// <see langword="false"/> when switching off could not fully take effect - the stored
+    /// identifier survived. Nothing is collected either way, but the caller must not tell the user
+    /// their identifier was discarded when it was not.
+    /// </returns>
+    public bool SetEnabled(bool enabled)
     {
         lock (_settingsLock)
         {
             _settings.Enabled = enabled;
+            var forgotten = true;
             if (!enabled)
             {
                 _settings.InstallId = null;
@@ -172,11 +181,12 @@ public sealed class AnalyticsClient : IDisposable
                 // The machine identifier is the one that actually reaches the collector, so
                 // forgetting only the installation identifier would leave the user re-linkable to
                 // everything they reported before - precisely what the dialog says will not happen.
-                _forgetMachineId?.Invoke();
+                forgotten = _forgetMachineId?.Invoke() ?? true;
                 DiscardSpool();
             }
 
             AnalyticsSettingsStore.Save(_settings, _settingsPath);
+            return forgotten;
         }
     }
 
@@ -225,6 +235,17 @@ public sealed class AnalyticsClient : IDisposable
     public void Track(string name, params (string Key, string Value)[] properties)
     {
         if (_disposed || !_settings.Enabled) return;
+
+        // Enforced here rather than at the call sites. A run reports its start once by definition,
+        // but three paths legitimately try - startup, agreeing in the consent dialog, and switching
+        // reporting on from the Privacy tab - because whichever one happens first is the one that
+        // finds reporting enabled. A second one would double the funnel's first step and the
+        // denominator of the crash rate, which are the two numbers this event exists to provide.
+        if (name == AnalyticsEvents.AppStarted
+            && Interlocked.Exchange(ref _appStartedReported, 1) == 1)
+        {
+            return;
+        }
 
         var recorded = AnalyticsSchema.Create(name, properties, DateTimeOffset.UtcNow, _runId);
         if (recorded is null) return;

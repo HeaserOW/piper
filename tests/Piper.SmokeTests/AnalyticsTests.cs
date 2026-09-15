@@ -528,7 +528,7 @@ internal static class AnalyticsTests
 
             string? machineId = "aaaabbbbccccdddd";
             using var client = temp.CreateClient(
-                server.Endpoint, machineId: () => machineId ??= "eeeeffff00001111", forgetMachineId: () => machineId = null);
+                server.Endpoint, machineId: () => machineId ??= "eeeeffff00001111", forgetMachineId: () => { machineId = null; return true; });
 
             client.Track(AnalyticsEvents.AppStarted);
             client.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
@@ -606,7 +606,7 @@ internal static class AnalyticsTests
             // Stands in for the registry-backed machine identifier, which is what reaches the wire.
             string? machineId = "aaaabbbbccccdddd";
             using var client = temp.CreateClient(
-                server.Endpoint, machineId: () => machineId, forgetMachineId: () => machineId = null);
+                server.Endpoint, machineId: () => machineId, forgetMachineId: () => { machineId = null; return true; });
 
             client.Track(AnalyticsEvents.AppStarted);
             await client.FlushAsync();
@@ -617,6 +617,32 @@ internal static class AnalyticsTests
             client.SetEnabled(false);
             runner.IsTrue(machineId is null, "opting out erases it, not just the installation id");
             runner.IsTrue(temp.Settings.InstallId is null, "and the installation id with it");
+        });
+
+        await runner.RunAsync("analytics: a run reports its start exactly once", async () =>
+        {
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+            using var client = temp.CreateClient();
+
+            // Three paths legitimately try to record this - startup, agreeing in the consent dialog,
+            // and switching reporting on from the Privacy tab - because whichever runs first is the
+            // one that finds reporting enabled. Two of them landing would double the funnel's first
+            // step and the denominator of the crash rate.
+            client.Track(AnalyticsEvents.AppStarted);
+            client.Track(AnalyticsEvents.AppStarted);
+            client.Track(AnalyticsEvents.AppStarted);
+            client.Track(AnalyticsEvents.CaptureStarted, (AnalyticsProperties.Result, "ok"));
+            client.FlushToDisk();
+
+            var spooled = temp.ReadSpool();
+            runner.AreEqual(
+                1,
+                spooled.Count(line => line.Contains(AnalyticsEvents.AppStarted, StringComparison.Ordinal)),
+                "the start is recorded once however many times it is reported");
+            runner.AreEqual(2, spooled.Length, "and other events are unaffected");
+            await Task.CompletedTask;
         });
 
         await runner.RunAsync("analytics: a refused event is never counted as delivered", async () =>
@@ -696,7 +722,7 @@ internal static class AnalyticsTests
         public string SettingsPath => Path.Combine(_directory.FullName, "analytics.json");
 
         public AnalyticsClient CreateClient(
-            Uri? endpoint = null, Func<string?>? machineId = null, Action? forgetMachineId = null) =>
+            Uri? endpoint = null, Func<string?>? machineId = null, Func<bool>? forgetMachineId = null) =>
             new(Settings, "0.0.0-test", endpoint ?? new Uri("https://localhost/v1/events"), SpoolPath, SettingsPath,
                 machineId, forgetMachineId);
 
