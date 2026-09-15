@@ -513,6 +513,72 @@ internal static class AnalyticsTests
             runner.IsTrue(!File.Exists(temp.SpoolPath + ".sending"), "and the undelivered remainder is not kept");
         });
 
+        await runner.RunAsync("analytics: opting out stops a batch already being delivered", async () =>
+        {
+            using var server = new LoopbackCollector();
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+
+            string? machineId = "aaaabbbbccccdddd";
+            using var client = temp.CreateClient(
+                server.Endpoint, machineId: () => machineId ??= "eeeeffff00001111", forgetMachineId: () => machineId = null);
+
+            client.Track(AnalyticsEvents.AppStarted);
+            client.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
+            client.Track(AnalyticsEvents.FirstSessionCaptured);
+
+            // The collector keeps accepting, so nothing but the opt-out itself can stop delivery.
+            // Consent has to be re-read between events, or the rest of a claimed batch still ships.
+            server.BeforeRespond = () => client.SetEnabled(false);
+            await client.FlushAsync();
+
+            runner.AreEqual(1, server.RequestCount, "delivery stops at the opt-out, not at the end of the batch");
+            runner.IsTrue(machineId is null, "and the identifier is not minted again by the events behind it");
+            runner.IsTrue(!File.Exists(temp.SpoolPath), "the pending spool is gone");
+            runner.IsTrue(!File.Exists(temp.SpoolPath + ".sending"), "and the undelivered remainder with it");
+        });
+
+        await runner.RunAsync("analytics: an oversized spool is discarded rather than read", async () =>
+        {
+            using var server = new LoopbackCollector();
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+
+            // The UI hands the user this folder, so a file far larger than Piper would ever write is
+            // a reachable state. Reading it in full is the thing to avoid.
+            Directory.CreateDirectory(Path.GetDirectoryName(temp.SpoolPath)!);
+            var line = "{\"name\":\"piper_usage_app_started\",\"time\":\"2026-01-01T00:00:00+00:00\",\"run\":\"r\",\"props\":{}}\n";
+            File.WriteAllText(temp.SpoolPath + ".sending", string.Concat(Enumerable.Repeat(line, 30_000)));
+            runner.IsTrue(new FileInfo(temp.SpoolPath + ".sending").Length > 2 * 1024 * 1024, "the spool starts oversized");
+
+            using var client = temp.CreateClient(server.Endpoint);
+            await client.FlushAsync();
+
+            runner.AreEqual(0, server.RequestCount, "nothing is sent from it");
+            runner.IsTrue(!File.Exists(temp.SpoolPath + ".sending"), "and it is discarded rather than parsed");
+        });
+
+        await runner.RunAsync("analytics: one flush cannot make unbounded requests", async () =>
+        {
+            using var server = new LoopbackCollector();
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+
+            Directory.CreateDirectory(Path.GetDirectoryName(temp.SpoolPath)!);
+            var line = "{\"name\":\"piper_usage_app_started\",\"time\":\"2026-01-01T00:00:00+00:00\",\"run\":\"r\",\"props\":{}}\n";
+            File.WriteAllText(temp.SpoolPath, string.Concat(Enumerable.Repeat(line, 1_000)));
+
+            using var client = temp.CreateClient(server.Endpoint);
+            await client.FlushAsync();
+
+            // The batch length is the number of outbound requests, so the contents of a file must
+            // not decide how much traffic one flush generates.
+            runner.IsTrue(server.RequestCount is > 0 and <= 200, $"capped at 200 requests, made {server.RequestCount}");
+        });
+
         await runner.RunAsync("analytics: opting out forgets the identifier that is actually sent", async () =>
         {
             using var server = new LoopbackCollector();

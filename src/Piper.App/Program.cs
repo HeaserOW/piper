@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Windows.Forms;
 using Piper.Core.Telemetry;
@@ -118,8 +119,18 @@ internal static class Program
         // The type and frames only - never the message, which routinely carries the URL that was
         // being processed. Written synchronously because the dialog below blocks until the user
         // dismisses it and the process may not survive to the next flush.
-        Analytics.TrackError("unhandled", exception, fatal: true);
-        Analytics.FlushToDisk();
+        // Guarded as a whole: this runs inside the unhandled-exception handler, so anything thrown
+        // here would escape it and take the dialog below with it. A missing report is a far smaller
+        // loss than a crash the user never sees.
+        try
+        {
+            Analytics.TrackError("unhandled", exception, fatal: true);
+            Analytics.FlushToDisk();
+        }
+        catch (Exception reportingFailure)
+        {
+            Debug.WriteLine($"Analytics failed on the crash path: {reportingFailure.GetType().Name}");
+        }
 
         MessageBox.Show(
             $"{exception.GetType().Name}: {exception.Message}\r\n\r\n{exception.StackTrace}",

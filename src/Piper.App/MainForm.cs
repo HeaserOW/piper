@@ -370,6 +370,10 @@ public sealed class MainForm : Form, IMessageFilter
         {
             TrustStore.Install(_ca.RootCertificate);
             Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "startup"));
+
+            // Restarting ends the process without running the shutdown flush, and the timer has not
+            // ticked this early in the run, so the event above only survives if it is written now.
+            Analytics.FlushToDisk();
             AppendLog($"Root certificate {_ca.RootCertificate.Thumbprint} added to the current user's trusted roots.");
             _closeAfterShutdown = true;
             Application.Restart();
@@ -683,9 +687,15 @@ public sealed class MainForm : Form, IMessageFilter
         if (dialog.AnalyticsEnabled != Analytics.IsEnabled)
         {
             Analytics.SetEnabled(dialog.AnalyticsEnabled);
-            AppendLog(dialog.AnalyticsEnabled
-                ? "Anonymous feedback is on."
-                : "Anonymous feedback is off. The installation ID and any pending reports were discarded.");
+
+            // Reporting that failed to start cannot be switched on, and SetEnabled is a no-op then.
+            // Logging success regardless would tell the user the opposite of the truth about a
+            // privacy control, and the setting would be back to its old value next time they look.
+            AppendLog(Analytics.SpoolPath is null
+                ? "Anonymous feedback could not be changed: reporting failed to start for this session."
+                : dialog.AnalyticsEnabled
+                    ? "Anonymous feedback is on."
+                    : "Anonymous feedback is off. The identifiers and any pending reports were discarded.");
         }
 
         AppendLog("Configurations saved. HTTPS protocol changes apply to new connections.");

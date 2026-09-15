@@ -66,7 +66,7 @@ public sealed class AnalyticsConsentDialog : Form
             "•  Which features you use, and how a capture or certificate step turned out\n"
             + "•  The type of any error, with the top few stack frames\n"
             + "•  Piper's version and your Windows version\n"
-            + "•  A random identifier, so repeat reports can be grouped",
+            + "•  A random ID stored on this machine, deleted if you turn this off",
             TextWidth));
 
         var neverHeading = Heading("What is never sent", Palette.Accent);

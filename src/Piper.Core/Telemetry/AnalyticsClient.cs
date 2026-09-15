@@ -44,6 +44,18 @@ public sealed class AnalyticsClient : IDisposable
     /// </summary>
     private const long MaxSpoolBytes = 1024 * 1024;
 
+    /// <summary>
+    /// Ceiling for a claimed batch. A drain can overshoot <see cref="MaxSpoolBytes"/> by one queue's
+    /// worth, so this leaves headroom above that; beyond it the file did not come from Piper.
+    /// </summary>
+    private const long MaxInflightBytes = 2 * MaxSpoolBytes;
+
+    /// <summary>Longest spooled line worth parsing. A real event is a few hundred bytes.</summary>
+    private const int MaxSpoolLineLength = 4096;
+
+    /// <summary>Events delivered per flush, and therefore requests made per flush.</summary>
+    private const int MaxBatchEvents = 200;
+
     private static readonly TimeSpan FlushInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
@@ -59,6 +71,14 @@ public sealed class AnalyticsClient : IDisposable
     private readonly Action? _forgetMachineId;
     private readonly string _runId = Guid.NewGuid().ToString("n");
     private readonly Lock _spoolLock = new();
+
+    /// <summary>
+    /// Serialises every change to <see cref="_settings"/> and its write to disk. The UI thread
+    /// changes the choice while the pump thread mints identifiers, and two overlapping
+    /// <c>File.WriteAllText</c> calls mean one throws and is swallowed - losing, in the worst case,
+    /// the write that recorded an opt-out, so collection silently resumes on the next launch.
+    /// </summary>
+    private readonly Lock _settingsLock = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly HttpClient _http;
 
@@ -124,26 +144,32 @@ public sealed class AnalyticsClient : IDisposable
     /// </summary>
     public void SetEnabled(bool enabled)
     {
-        _settings.Enabled = enabled;
-        if (!enabled)
+        lock (_settingsLock)
         {
-            _settings.InstallId = null;
+            _settings.Enabled = enabled;
+            if (!enabled)
+            {
+                _settings.InstallId = null;
 
-            // The machine identifier is the one that actually reaches the collector, so forgetting
-            // only the installation identifier would leave the user re-linkable to everything they
-            // reported before - which is precisely what the dialog tells them will not happen.
-            _forgetMachineId?.Invoke();
-            DiscardSpool();
+                // The machine identifier is the one that actually reaches the collector, so
+                // forgetting only the installation identifier would leave the user re-linkable to
+                // everything they reported before - precisely what the dialog says will not happen.
+                _forgetMachineId?.Invoke();
+                DiscardSpool();
+            }
+
+            AnalyticsSettingsStore.Save(_settings, _settingsPath);
         }
-
-        AnalyticsSettingsStore.Save(_settings, _settingsPath);
     }
 
     /// <summary>Records that the user has been told what is collected. Until this runs, nothing uploads.</summary>
     public void RecordNoticeShown(string version)
     {
-        _settings.NoticeShownVersion = version;
-        AnalyticsSettingsStore.Save(_settings, _settingsPath);
+        lock (_settingsLock)
+        {
+            _settings.NoticeShownVersion = version;
+            AnalyticsSettingsStore.Save(_settings, _settingsPath);
+        }
     }
 
     private void DiscardSpool()
@@ -241,8 +267,12 @@ public sealed class AnalyticsClient : IDisposable
         // One request per event: the collector counts events, it does not accept batches. Sent in
         // order and stopped at the first failure, so a dropped connection halfway through costs a
         // retry of the remainder rather than a re-send of everything.
+        // Enabled is re-read before every event, not just when the batch was claimed: a user who
+        // opts out while a flush is in flight has the rest of the batch stopped mid-way, which is
+        // what the dialog promises. Without this, a claimed batch finishes regardless.
         var delivered = 0;
         while (delivered < batch.Length
+            && _settings.Enabled
             && await TryDeliverAsync(batch[delivered], cancellationToken).ConfigureAwait(false))
         {
             delivered++;
@@ -374,10 +404,24 @@ public sealed class AnalyticsClient : IDisposable
                 File.Move(_spoolPath, _inflightPath);
             }
 
-            var batch = new List<AnalyticsEvent>();
-            foreach (var line in File.ReadAllLines(_inflightPath))
+            // An in-flight file is always a trimmed spool, so it cannot legitimately be this large.
+            // Past the ceiling it has been grown or hand-edited outside Piper, and is discarded
+            // rather than parsed - the alternative is reading an arbitrary amount into memory.
+            if (new FileInfo(_inflightPath).Length > MaxInflightBytes)
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
+                File.Delete(_inflightPath);
+                return [];
+            }
+
+            var batch = new List<AnalyticsEvent>();
+
+            // Enumerated lazily and capped: the batch length is the number of outbound requests one
+            // flush makes, so leaving it open-ended lets the contents of a file decide how much
+            // traffic Piper generates.
+            foreach (var line in File.ReadLines(_inflightPath))
+            {
+                if (batch.Count >= MaxBatchEvents) break;
+                if (string.IsNullOrWhiteSpace(line) || line.Length > MaxSpoolLineLength) continue;
 
                 AnalyticsEvent? parsed;
                 try
@@ -396,6 +440,7 @@ public sealed class AnalyticsClient : IDisposable
                 // and the UI invites opening it, so it gets the same treatment as any hostile input:
                 // without this the dereference throws past every catch here and kills the pump.
                 var properties = parsed.Properties?
+                    .Take(AnalyticsSchema.MaxProperties)
                     .Select(property => (property.Key, property.Value))
                     .ToArray();
 
@@ -477,7 +522,11 @@ public sealed class AnalyticsClient : IDisposable
             var url = BuildCounterUrl(recorded);
             if (url is null) return true; // Unsendable, and retrying will not change that. Drop it.
 
-            using var response = await _http.GetAsync(url, cancellationToken).ConfigureAwait(false);
+            // Headers only: nothing here reads the body, and buffering one from a third-party
+            // endpoint is an attacker-controlled amount of memory per event.
+            using var response = await _http
+                .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                .ConfigureAwait(false);
             if (response.IsSuccessStatusCode) return true;
 
             // A refusal the collector will repeat forever - a bad name, a wrong path - would
@@ -528,9 +577,12 @@ public sealed class AnalyticsClient : IDisposable
         extra[AnalyticsProperties.Timestamp] =
             recorded.Timestamp.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+        var identity = ResolveIdentity();
+        if (identity is null) return null;
+
         var url = $"{_endpoint.GetLeftPart(UriPartial.Authority)}/analytics/Counter"
             + $"?Name={Uri.EscapeDataString(recorded.Name)}"
-            + $"&MUID={Uri.EscapeDataString(ResolveIdentity())}"
+            + $"&MUID={Uri.EscapeDataString(identity)}"
             + $"&Extra={Uri.EscapeDataString(JsonSerializer.Serialize(extra))}";
 
         // Escaped, unlike the desktop caller in the CurseForge app, whose Extra goes in raw.
@@ -553,27 +605,32 @@ public sealed class AnalyticsClient : IDisposable
     /// unbounded, unsanitised strings in the payload. Anything that is not a plain token is
     /// discarded rather than echoed.
     /// </summary>
-    private string ResolveIdentity()
+    private string? ResolveIdentity()
     {
-        var machine = _machineId?.Invoke();
-        if (!string.IsNullOrEmpty(machine) && AnalyticsSchema.SanitiseValue(machine) == machine)
+        lock (_settingsLock)
         {
-            return machine;
+            // Resolving mints and stores an identifier, so it must not happen once the user has
+            // opted out - the machine-id callback would recreate in the registry exactly what
+            // SetEnabled(false) just deleted, moments after deleting it.
+            if (!_settings.Enabled) return null;
+
+            var machine = _machineId?.Invoke();
+            if (!string.IsNullOrEmpty(machine) && AnalyticsSchema.SanitiseValue(machine) == machine)
+            {
+                return machine;
+            }
+
+            var existing = _settings.InstallId;
+            if (!string.IsNullOrEmpty(existing) && AnalyticsSchema.SanitiseValue(existing) == existing)
+            {
+                return existing;
+            }
+
+            var minted = Guid.NewGuid().ToString("n");
+            _settings.InstallId = minted;
+            AnalyticsSettingsStore.Save(_settings, _settingsPath);
+            return minted;
         }
-
-        var existing = _settings.InstallId;
-        if (!string.IsNullOrEmpty(existing) && AnalyticsSchema.SanitiseValue(existing) == existing)
-        {
-            return existing;
-        }
-
-        var minted = Guid.NewGuid().ToString("n");
-
-        // Only persisted while reporting is on. Without this check an in-flight delivery racing an
-        // opt-out writes back the identifier the user just erased.
-        _settings.InstallId = minted;
-        if (_settings.Enabled) AnalyticsSettingsStore.Save(_settings, _settingsPath);
-        return minted;
     }
 
     public void Dispose()

@@ -328,8 +328,29 @@ session-list filters, so their request and response are always visible in the Se
 
 Choosing to update downloads the release installer and its `SHA256SUMS.txt` manifest directly from
 GitHub. Piper verifies the installer hash before starting it, then closes so the installer can
-replace the running executable. Update checks send only the normal Piper user-agent and do not
-send captured traffic or telemetry.
+replace the running executable. Update checks send only the normal Piper user-agent and never send
+captured traffic.
+
+## Anonymous feedback
+
+Piper can report anonymous usage and error information so its rough edges can be found and fixed.
+**It is off unless you turn it on.** The first run asks once, with both answers given equal weight;
+declining, closing the dialog, or pressing Escape all leave it off, and nothing is collected or
+transmitted until you agree.
+
+**What is sent:** which features you use, how a capture or certificate step turned out, the type of
+any error with its top few stack frames, Piper's version and your Windows version, and a random
+identifier stored in `HKCU\Software\Piper` so repeat reports can be grouped.
+
+**What is never sent:** captured traffic, URLs, hostnames, headers, bodies, cookies, credentials,
+certificates, private keys, file paths, exception messages, or your settings. Reporting can only
+carry values made of letters, digits, `.`, `_`, and `-`, checked when an event is recorded and again
+when it is read back from disk, so a URL or header cannot be reported even by a mistake in Piper's
+own code. Counts and durations are bucketed rather than exact.
+
+Reports wait in `%LOCALAPPDATA%\Piper\analytics\pending.jsonl`, a plain text file you can read before
+it is sent. **Tools > Configurations > Privacy** holds the switch and a button that opens that
+folder. Turning reporting off deletes the identifiers and discards anything not yet sent.
 
 ## Releasing
 
