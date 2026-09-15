@@ -338,6 +338,15 @@
     "responseTunnel": "Response   (encrypted tunnel - not decrypted)",
     "responseWaiting": "Response   (waiting)",
 
+    "timingStarted": "{{time, HH:mm:ss.fff}}",
+    "timingTotal": "   total $t(sessionList.duration)",
+    "timingConnect": "   connect $t(sessionList.duration)",
+    "timingTimeToFirstByte": "   ttfb $t(sessionList.duration)",
+    "timingUp": "   up {{size}}",
+    "timingDown": "   down {{size}}",
+    "timingServer": "   server {{endpoint}}",
+    "timingComposed": "   [composed]",
+
     "tabHeaders": "Headers",
     "tabBody": "Body",
     "tabRaw": "Raw",
@@ -450,6 +459,7 @@
     "requests_other": "{{count, N0}} requests",
     "hosts_one": "{{count, N0}} host",
     "hosts_other": "{{count, N0}} hosts",
+    "historyRowLabel": "{{method}} {{target}}",
     "historyCount": "{{requests}} · {{hosts}}",
     "historyCountWithWarning": "{{requests}} - {{warning}}",
 

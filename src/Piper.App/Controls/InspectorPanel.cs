@@ -86,19 +86,19 @@ public sealed class InspectorPanel : UserControl
     private static string BuildTimingLine(Session session)
     {
         var sb = new StringBuilder();
-        sb.Append(session.Started.ToString("HH:mm:ss.fff"));
-        sb.Append("   total ").Append($"{session.Duration.TotalMilliseconds:N0} ms");
+        sb.Append(Strings.Inspector.TimingStarted(session.Started));
+        sb.Append(Strings.Inspector.TimingTotal(session.Duration.TotalMilliseconds));
 
         if (session.ConnectTime is { } connect)
-            sb.Append("   connect ").Append($"{connect.TotalMilliseconds:N0} ms");
+            sb.Append(Strings.Inspector.TimingConnect(connect.TotalMilliseconds));
         if (session.TimeToFirstByte is { } ttfb)
-            sb.Append("   ttfb ").Append($"{ttfb.TotalMilliseconds:N0} ms");
+            sb.Append(Strings.Inspector.TimingTimeToFirstByte(ttfb.TotalMilliseconds));
 
-        sb.Append("   up ").Append(FormatBytes(session.RequestSize));
-        sb.Append("   down ").Append(FormatBytes(session.ResponseSize));
+        sb.Append(Strings.Inspector.TimingUp(FormatBytes(session.RequestSize)));
+        sb.Append(Strings.Inspector.TimingDown(FormatBytes(session.ResponseSize)));
 
-        if (session.ServerEndpoint is { } endpoint) sb.Append("   server ").Append(endpoint);
-        if (session.IsComposed) sb.Append("   [composed]");
+        if (session.ServerEndpoint is { } endpoint) sb.Append(Strings.Inspector.TimingServer(endpoint));
+        if (session.IsComposed) sb.Append(Strings.Inspector.TimingComposed);
 
         return sb.ToString();
     }

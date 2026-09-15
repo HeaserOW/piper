@@ -214,8 +214,8 @@ public sealed class ComposerHistoryTree : UserControl
     private static string LabelFor(ComposerRow row) => row.Kind switch
     {
         ComposerRowKind.Host => row.Host,
-        ComposerRowKind.Request =>
-            ComposerHistoryView.MethodOf(row.Session) + " " + ComposerHistoryView.TargetOf(row.Session),
+        ComposerRowKind.Request => Strings.Composer.HistoryRowLabel(
+            ComposerHistoryView.MethodOf(row.Session), ComposerHistoryView.TargetOf(row.Session)),
         _ => (row.Session.Completed ?? row.Session.Started).ToLocalTime().ToString("HH:mm:ss"),
     };
 

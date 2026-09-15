@@ -43,7 +43,11 @@ internal static partial class UiStringTests
                 ? "every entry in en.json is still reached from code"
                 : "unreferenced entries in en.json: " + string.Join(", ", orphans));
 
-        var blank = catalogue.Where(key => I18n.T(key).Length == 0).Order(StringComparer.Ordinal).ToList();
+        // Only entries that substitute nothing: one that is entirely a placeholder renders empty
+        // here purely because this check passes no arguments.
+        var blank = catalogue
+            .Where(key => !I18n.Placeholders(key).Any() && I18n.T(key).Length == 0)
+            .Order(StringComparer.Ordinal).ToList();
         runner.AreEqual(0, blank.Count,
             blank.Count == 0 ? "no entry is empty" : "empty entries: " + string.Join(", ", blank));
 
@@ -63,6 +67,10 @@ internal static partial class UiStringTests
         runner.AreEqual("0 matches", Strings.Inspector.MatchCount(0), "zero takes the _other form in English");
         runner.IsTrue(Strings.Filters.FilterSetFilter.EndsWith(Strings.Common.AllFilesFilter, StringComparison.Ordinal),
             "$t(common.allFilesFilter) splices the shared entry in");
+        // A spliced entry has to keep its format specifier, or "$t(sessionList.duration)" would
+        // render "1234 ms" where the entry it borrows asks for "1,234 ms".
+        runner.AreEqual("   total " + Strings.SessionList.Duration(1234), Strings.Inspector.TimingTotal(1234),
+            "$t() carries the borrowed entry's format specifier through");
         runner.AreEqual("piper.no.such.key", I18n.T("piper.no.such.key"), "a missing key falls back to itself");
 
         return Task.CompletedTask;

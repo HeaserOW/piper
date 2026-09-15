@@ -443,6 +443,23 @@ internal static class Strings
         public static string ResponseTunnel => I18n.T("inspector.responseTunnel");
         public static string ResponseWaiting => I18n.T("inspector.responseWaiting");
 
+        /// <summary>
+        /// The status bar's timing summary, which is assembled from the parts that apply to a given
+        /// session. Each part carries its own leading separator, so the spacing of the whole line
+        /// reads in the catalogue rather than at the builder that joins them.
+        /// </summary>
+        public static string TimingStarted(DateTimeOffset time) => I18n.T("inspector.timingStarted", ("time", time));
+        public static string TimingTotal(double milliseconds) =>
+            I18n.T("inspector.timingTotal", ("milliseconds", milliseconds));
+        public static string TimingConnect(double milliseconds) =>
+            I18n.T("inspector.timingConnect", ("milliseconds", milliseconds));
+        public static string TimingTimeToFirstByte(double milliseconds) =>
+            I18n.T("inspector.timingTimeToFirstByte", ("milliseconds", milliseconds));
+        public static string TimingUp(string size) => I18n.T("inspector.timingUp", ("size", size));
+        public static string TimingDown(string size) => I18n.T("inspector.timingDown", ("size", size));
+        public static string TimingServer(object endpoint) => I18n.T("inspector.timingServer", ("endpoint", endpoint));
+        public static string TimingComposed => I18n.T("inspector.timingComposed");
+
         public static string TabHeaders => I18n.T("inspector.tabHeaders");
         public static string TabBody => I18n.T("inspector.tabBody");
         public static string TabRaw => I18n.T("inspector.tabRaw");
@@ -573,6 +590,10 @@ internal static class Strings
 
         public static string HistoryCountWithWarning(int sends, string warning) =>
             I18n.T("composer.historyCountWithWarning", ("requests", Requests(sends)), ("warning", warning));
+
+        /// <summary>The method and target of one history row, as accessibility tools read it.</summary>
+        public static string HistoryRowLabel(string method, string target) =>
+            I18n.T("composer.historyRowLabel", ("method", method), ("target", target));
 
         private static string Requests(int count) => I18n.T("composer.requests", ("count", count));
         private static string Hosts(int count) => I18n.T("composer.hosts", ("count", count));

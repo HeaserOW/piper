@@ -154,10 +154,24 @@ internal static class I18n
             if (template[i] == '$' && depth < MaxNestingDepth && Nested(template, i) is { } reference)
             {
                 // Spliced at compile time: a referenced entry cannot depend on this call's
-                // arguments, so there is nothing to defer to substitution time.
-                literal.Append(Catalogue.TryGetValue(reference.Key, out var value)
-                    ? Flatten(Compile(value, depth + 1).Segments)
-                    : reference.Key);
+                // arguments, so there is nothing to defer to substitution time. Its parsed segments
+                // are taken as they are -- rendering it back to text and re-scanning would have to
+                // reproduce every placeholder's format specifier exactly, and quietly dropped it.
+                if (Catalogue.TryGetValue(reference.Key, out var value))
+                {
+                    if (literal.Length > 0)
+                    {
+                        segments.Add(new Segment(literal.ToString(), null, null));
+                        literal.Clear();
+                    }
+
+                    segments.AddRange(Compile(value, depth + 1).Segments);
+                }
+                else
+                {
+                    literal.Append(reference.Key);
+                }
+
                 i = reference.After - 1;
                 continue;
             }
@@ -205,15 +219,6 @@ internal static class I18n
 
         var close = template.IndexOf(')', start + 3);
         return close < 0 ? null : (template[(start + 3)..close].Trim(), close + 1);
-    }
-
-    /// <summary>Renders segments back to template text, so a spliced entry keeps its own placeholders.</summary>
-    private static string Flatten(Segment[] segments)
-    {
-        var builder = new StringBuilder();
-        foreach (var segment in segments)
-            builder.Append(segment.Name is null ? segment.Text : "{{" + segment.Name + "}}");
-        return builder.ToString();
     }
 
     /// <summary>
