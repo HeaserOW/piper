@@ -7,14 +7,17 @@ namespace Piper.App;
 /// The one-time question about anonymous feedback.
 ///
 /// A real form rather than a message box because this is a consent decision, not a notification: it
-/// has to show what is and is not collected side by side, and it has to make declining the resting
-/// state. The choice is a checkbox that starts unchecked and a single Continue button: reporting is
-/// switched on only by ticking the box and then pressing Continue. Escaping or closing the window
-/// declines even with the box ticked, because backing out of a consent dialog is not consent.
+/// has to show what is and is not collected side by side, and both answers have to be equally easy
+/// to give.
+///
+/// Two buttons rather than a checkbox above a single Continue: with one button the lazy path is a
+/// silent decline, so the only people who opt in are the ones who noticed a checkbox - which biases
+/// the reports toward careful readers on top of the bias opt-in already carries. Two equally sized
+/// buttons make it visible that a question was asked and that either answer is one click away.
 /// </summary>
 public sealed class AnalyticsConsentDialog : Form
 {
-    private readonly CheckBox _optIn;
+    private readonly Button _decline;
 
     public AnalyticsConsentDialog()
     {
@@ -51,7 +54,7 @@ public sealed class AnalyticsConsentDialog : Form
         body.Controls.Add(new Label
         {
             Text = "Piper is easier to improve when we can see which features get used and what breaks. "
-                + "This is entirely optional and off unless you turn it on.",
+                + "This is entirely optional, and nothing is collected unless you choose to send it.",
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,
@@ -85,29 +88,29 @@ public sealed class AnalyticsConsentDialog : Form
             Margin = new Padding(0, 4, 0, 14),
         });
 
-        _optIn = new CheckBox
-        {
-            Text = "Send anonymous feedback to help improve Piper",
-            Checked = false,
-            AutoSize = true,
-            Margin = new Padding(0, 0, 0, 6),
-        };
-        body.Controls.Add(_optIn);
-
         body.Controls.Add(new Label
         {
             Text = "You can change this at any time under Tools > Configurations > Privacy.",
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,
-            Margin = new Padding(22, 0, 0, 0),
+            Margin = new Padding(0, 0, 0, 0),
         });
 
-        var continueButton = new Button
+        // Equal size on purpose. Making the refusal smaller or quieter than the acceptance is the
+        // thing that turns a question into a nudge, and this one has to stand up as real consent.
+        var accept = new Button
         {
-            Text = "Continue",
+            Text = "Send anonymous feedback",
             DialogResult = DialogResult.OK,
-            Size = new Size(110, 34),
+            Size = new Size(190, 34),
+        };
+
+        _decline = new Button
+        {
+            Text = "No thanks",
+            DialogResult = DialogResult.Cancel,
+            Size = new Size(120, 34),
         };
 
         var footer = new Panel
@@ -125,27 +128,22 @@ public sealed class AnalyticsConsentDialog : Form
         var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 130,
+            Width = 330,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
         };
-        actions.Controls.Add(continueButton);
+        actions.Controls.Add(accept);
+        actions.Controls.Add(_decline);
         footer.Controls.Add(actions);
 
         Controls.Add(body);
         Controls.Add(footer);
 
-        // Continue is the only way to commit an answer. Escape and the window's X close the dialog
-        // without one, which counts as declining: ticking the box and then backing out is not
-        // consent, and the safe reading of "they closed it" is that they did not agree.
-        AcceptButton = continueButton;
-        KeyPreview = true;
-        KeyDown += (_, e) =>
-        {
-            if (e.KeyCode != Keys.Escape) return;
-            DialogResult = DialogResult.Cancel;
-            Close();
-        };
+        // Escape and the window's X decline. There is deliberately no AcceptButton, so Enter cannot
+        // reach the accept button unless the user has tabbed to it themselves - and focus starts on
+        // the refusal (see OnShown), because a dialog cleared with the keyboard must not be read as
+        // agreement.
+        CancelButton = _decline;
 
         Palette.Apply(this);
 
@@ -156,10 +154,21 @@ public sealed class AnalyticsConsentDialog : Form
     }
 
     /// <summary>
-    /// The user's answer: true only when they ticked the box and committed with Continue. Closing
-    /// the dialog any other way is a decline, whatever the box happened to say.
+    /// Starts on the refusal. Enter activates whichever button has focus regardless of
+    /// <see cref="Form.AcceptButton"/>, so without this the first control in the tab order - the
+    /// accept button - would turn a stray keypress into consent.
     /// </summary>
-    public bool AnalyticsEnabled => DialogResult == DialogResult.OK && _optIn.Checked;
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        _decline.Focus();
+    }
+
+    /// <summary>
+    /// The user's answer: true only when they pressed the accept button. Every other way out of the
+    /// dialog - the decline button, Escape, the window's X - is a refusal.
+    /// </summary>
+    public bool AnalyticsEnabled => DialogResult == DialogResult.OK;
 
     private static Label Heading(string text, Color accent) => new()
     {
