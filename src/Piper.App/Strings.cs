@@ -115,6 +115,7 @@ internal static class Strings
         public static string Help => I18n.T("menu.help");
         public static string SearchSyntax => I18n.T("menu.searchSyntax");
         public static string CheckForUpdates => I18n.T("menu.checkForUpdates");
+        public static string SaveDiagnostics => I18n.T("menu.saveDiagnostics");
         public static string About => I18n.T("menu.about");
 
         public static string View => I18n.T("menu.view");
@@ -325,6 +326,25 @@ internal static class Strings
         public static string HideHostSwitchedToHideMode => I18n.T("log.hideHostSwitchedToHideMode");
         public static string HideHostAdded(string host) => I18n.T("log.hideHostAdded", ("host", host));
 
+        public static string ShowingTrustPrompt => I18n.T("log.showingTrustPrompt");
+        public static string NoSazToImport(string names) => I18n.T("log.noSazToImport", ("names", names));
+        public static string RunningElevated => I18n.T("log.runningElevated");
+        public static string WritingDiagnostics(string fileName) =>
+            I18n.T("log.writingDiagnostics", ("fileName", fileName));
+        public static string DiagnosticsWriteFailed(string message) =>
+            I18n.T("log.diagnosticsWriteFailed", ("message", message));
+
+        public static string IgnoredDrop(string reason) => I18n.T("log.ignoredDrop", ("reason", reason));
+        public static string DropNoData => I18n.T("log.dropNoData");
+        public static string DropNoRecognisedFormat => I18n.T("log.dropNoRecognisedFormat");
+        public static string DropNoFileOnly(string formats) => I18n.T("log.dropNoFileOnly", ("formats", formats));
+        public static string DropNoneImportable(int count, string names) =>
+            I18n.T("log.dropNoneImportable", ("count", count), ("names", names));
+        public static string DropRejectedFolder(string name) => I18n.T("log.dropRejectedFolder", ("name", name));
+        public static string DropRejectedMissing(string name) => I18n.T("log.dropRejectedMissing", ("name", name));
+        public static string DropRejectedWrongType(string name) =>
+            I18n.T("log.dropRejectedWrongType", ("name", name));
+
         public static string UpdateCheckFailed(string message) => I18n.T("log.updateCheckFailed", ("message", message));
         public static string UpToDate(Version version) => I18n.T("log.upToDate", ("version", version));
         public static string UpdateAvailable(Version version) => I18n.T("log.updateAvailable", ("version", version));
@@ -345,6 +365,43 @@ internal static class Strings
     {
         public static string ProxyRestoreFailed(string message) =>
             I18n.T("shutdown.proxyRestoreFailed", ("message", message));
+    }
+
+    /// <summary>
+    /// The bug-report bundle. Its wording states exactly what the export contains, so treat a change
+    /// here as a change to a promise about captured data rather than as copy editing.
+    /// </summary>
+    public static class Diagnostics
+    {
+        public static string SaveCaption => I18n.T("diagnostics.saveCaption");
+        public static string SaveFilter => I18n.T("diagnostics.saveFilter");
+        public static string SaveFileName(DateTime now) => I18n.T("diagnostics.saveFileName", ("now", now));
+
+        public static string WriteFailedCaption => I18n.T("diagnostics.writeFailedCaption");
+        public static string WriteFailedBody(string message) =>
+            I18n.T("diagnostics.writeFailedBody", ("message", message));
+
+        /// <summary>What the bundle actually holds, quoted back to the user in the saved dialog.</summary>
+        public static string Contents => I18n.T("diagnostics.contents");
+        public static string SummaryNone => I18n.T("diagnostics.summaryNone");
+        public static string SummaryAndMore(string shown, int more) =>
+            I18n.T("diagnostics.summaryAndMore", ("shown", shown), ("more", more));
+        public static string EarlierEntriesOmitted => I18n.T("diagnostics.earlierEntriesOmitted");
+        public static string CrashLogUnreadable(string fileName, string message) =>
+            I18n.T("diagnostics.crashLogUnreadable", ("fileName", fileName), ("message", message));
+
+        public static string SavedCaption => I18n.T("diagnostics.savedCaption");
+        public static string SavedBody(string fileName, string contents) =>
+            I18n.T("diagnostics.savedBody", ("fileName", fileName), ("contents", contents));
+
+        public static string Environment(string? version, string os, object architecture, object runtime,
+            bool is64Bit, bool elevated, int scale, string culture) =>
+            I18n.T("diagnostics.environment",
+                ("version", version ?? I18n.T("diagnostics.versionUnknown")),
+                ("os", os), ("architecture", architecture), ("runtime", runtime),
+                ("bitness", is64Bit ? I18n.T("diagnostics.bits64") : I18n.T("diagnostics.bits32")),
+                ("elevated", elevated ? I18n.T("diagnostics.yes") : I18n.T("diagnostics.no")),
+                ("scale", scale), ("culture", culture));
     }
 
     // ------------------------------------------------------------------ capture list

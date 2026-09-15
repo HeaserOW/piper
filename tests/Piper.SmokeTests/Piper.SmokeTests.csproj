@@ -14,8 +14,9 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\Piper.App\UpdateService.cs" Link="UpdateService.cs" />
-    <!-- UpdateService reports its failures with the app's shared string catalogue, so the tests
-         link the catalogue in and exercise the same loader the app uses. -->
+    <Compile Include="..\..\src\Piper.App\DiagnosticsBundle.cs" Link="DiagnosticsBundle.cs" />
+    <!-- UpdateService and DiagnosticsBundle report their failures with the app's shared string
+         catalogue, so the tests link it in and exercise the same loader the app uses. -->
     <Compile Include="..\..\src\Piper.App\Strings.cs" Link="Strings.cs" />
     <Compile Include="..\..\src\Piper.App\I18n.cs" Link="I18n.cs" />
     <EmbeddedResource Include="..\..\src\Piper.App\Locales\en.json" LogicalName="Piper.App.Locales.en.json" />

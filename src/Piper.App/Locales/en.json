@@ -61,6 +61,7 @@
     "help": "&Help",
     "searchSyntax": "&Search syntax",
     "checkForUpdates": "Check for &updates...",
+    "saveDiagnostics": "Save &diagnostics for a bug report...",
     "about": "&About",
 
     "view": "&View",
@@ -243,6 +244,21 @@
     "hideHostSwitchedToHideMode": "Hide this host: the Filters tab's Hosts list had nothing ticked, so it switched to \"Hide the following Hosts\".",
     "hideHostAdded": "Hide this host: the Filters tab's Hosts list now hides {{host}}. It stays hidden here for this session; the saved list applies when you tick \"Use Filters\" there, or on the next start if it is ticked already.",
 
+    "showingTrustPrompt": "Showing the root certificate trust prompt. The main window is disabled, and will ignore dropped files, until it is answered.",
+    "noSazToImport": "No SAZ file to import from {{names}}: a capture must be an existing .saz or .raz file.",
+    "runningElevated": "Piper is running elevated. Windows blocks drag-and-drop from a normal Explorer window into an elevated one; restart Piper without administrator rights if dropping a .saz file does nothing.",
+    "writingDiagnostics": "Writing diagnostics to {{fileName}}.",
+    "diagnosticsWriteFailed": "Could not write the diagnostics file: {{message}}",
+
+    "ignoredDrop": "Ignored a drop: {{reason}}",
+    "dropNoData": "the drop carried no data.",
+    "dropNoRecognisedFormat": "the drop carried no recognised format.",
+    "dropNoFileOnly": "no dropped file, only {{formats}}. Drag the .saz from a folder window; a file dragged straight out of mail, an archive viewer or a browser has not been written to disk yet.",
+    "dropNoneImportable": "dropped {{count}} file(s), none importable: {{names}}.",
+    "dropRejectedFolder": "{{name}} (a folder)",
+    "dropRejectedMissing": "{{name}} (not on disk)",
+    "dropRejectedWrongType": "{{name}} (not a .saz or .raz file)",
+
     "updateCheckFailed": "Update check failed: {{message}}",
     "upToDate": "Piper {{version}} is up to date.",
     "updateAvailable": "Piper {{version}} is available.",
@@ -254,6 +270,31 @@
 
   "shutdown": {
     "proxyRestoreFailed": "Piper could not restore the system proxy, so it will remain open.\n\n{{message}}"
+  },
+
+  "diagnostics": {
+    "saveCaption": "Save diagnostics for a bug report",
+    "saveFilter": "Zip archives (*.zip)|*.zip|$t(common.allFilesFilter)",
+    "saveFileName": "piper-diagnostics-{{now, yyyyMMdd-HHmmss}}.zip",
+
+    "writeFailedCaption": "Piper",
+    "writeFailedBody": "Piper could not write the diagnostics file.\n\n{{message}}",
+
+    "savedCaption": "Diagnostics saved",
+    "savedBody": "Saved {{fileName}}.\n\nIt contains {{contents}}: Piper's own log messages and a summary of this machine. No captured requests, responses, bodies, cookies or certificates are included, and nothing is uploaded.\n\nThe log can still name hosts you have filtered, AutoResponder rules you have written and files you have opened, so read it before sending it on.",
+
+    "contents": "environment.txt, log.txt and crash.log (when one exists)",
+    "summaryNone": "none",
+    "summaryAndMore": "{{shown}} and {{more}} more",
+    "earlierEntriesOmitted": "[earlier entries omitted]",
+    "crashLogUnreadable": "crash log {{fileName}} could not be read: {{message}}",
+
+    "environment": "Piper {{version}} on {{os}} ({{architecture}}), .NET {{runtime}}, {{bitness}} process, elevated: {{elevated}}, display scale: {{scale}}%, culture: {{culture}}.",
+    "versionUnknown": "unknown",
+    "bits64": "64-bit",
+    "bits32": "32-bit",
+    "yes": "yes",
+    "no": "no"
   },
 
   "sessionList": {

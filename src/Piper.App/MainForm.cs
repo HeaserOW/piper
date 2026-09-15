@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Security;
+using System.Security.Principal;
 using System.Windows.Forms;
 using Piper.App.Controls;
 using Piper.App.Theme;
@@ -240,6 +244,11 @@ public sealed class MainForm : Form, IMessageFilter
 
         Palette.Apply(this);
         UpdateZoomStatus();
+        AppendLog(DescribeEnvironment());
+        // Windows refuses drags from an unelevated Explorer to an elevated window and reports
+        // nothing to either side, so an elevated run has to be visible in the log before a
+        // "drag and drop does nothing" report can be read.
+        if (IsElevated()) AppendLog(Strings.Log.RunningElevated);
         AppendLog(Strings.Log.RootCaPath(_ca.RootPfxPath));
         AppendLog(TrustStore.IsTrusted(_ca.RootCertificate)
             ? Strings.Log.RootCaTrusted
@@ -309,6 +318,11 @@ public sealed class MainForm : Form, IMessageFilter
     private bool EnsureTrustedRootForStartup()
     {
         if (TrustStore.IsTrusted(_ca.RootCertificate)) return true;
+
+        // Worth a line of its own: this dialog is modal, so while it is up the main window is
+        // disabled and refuses every drop. That reads as "drag and drop is broken" to a user who
+        // has not noticed the prompt, and it is what a fresh install shows on first run.
+        AppendLog(Strings.Log.ShowingTrustPrompt);
 
         var answer = MessageBox.Show(this,
             Strings.Certificates.StartupTrustBody,
@@ -400,7 +414,51 @@ public sealed class MainForm : Form, IMessageFilter
     private void OnSazFileDragDrop(object? sender, DragEventArgs e)
     {
         var paths = SazFilesFrom(e.Data);
-        if (paths.Length > 0) ImportSazFiles(paths);
+        if (paths.Length > 0)
+        {
+            ImportSazFiles(paths);
+            return;
+        }
+
+        // A refused file drop used to do nothing at all: no cursor feedback while dragging and no
+        // trace afterwards, which is indistinguishable from the window ignoring the mouse. Say why
+        // it was refused, because the answer is usually the drag source rather than the file.
+        // Every control is registered for both drags, so a session dropped on the Composer or the
+        // AutoResponder reaches here too. That one is handled elsewhere and is not a refusal.
+        if (e.Data?.GetData(typeof(Session)) is Session) return;
+        AppendLog(Strings.Log.IgnoredDrop(DescribeRefusedDrop(e.Data)));
+    }
+
+    /// <summary>
+    /// Why a drop carried nothing importable. Only file names are recorded, never directories: the
+    /// log is meant to be exported, and the path a user keeps captures in is not ours to publish.
+    /// </summary>
+    private static string DescribeRefusedDrop(IDataObject? data)
+    {
+        if (data is null) return Strings.Log.DropNoData;
+
+        var formats = data.GetFormats();
+        if (data.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths)
+        {
+            // Outlook, 7-Zip, Teams and browser download shelves hand over virtual files
+            // (FileGroupDescriptor) that have no path on disk, so there is nothing to open.
+            return formats.Length == 0
+                ? Strings.Log.DropNoRecognisedFormat
+                : Strings.Log.DropNoFileOnly(
+                    DiagnosticsBundle.Summarise(formats, formats.Length, MaxLoggedNames));
+        }
+
+        // Only the names that will be printed are examined. The count comes from the drag source,
+        // and probing every path of a dropped folder would stall the drop handler on the UI thread
+        // - for as long as an unreachable network share takes to time out, once per file.
+        var rejected = paths.Select(path => Path.GetFileName(path) switch
+        {
+            var name when Directory.Exists(path) => Strings.Log.DropRejectedFolder(name),
+            var name when !File.Exists(path) => Strings.Log.DropRejectedMissing(name),
+            var name => Strings.Log.DropRejectedWrongType(name),
+        });
+        return Strings.Log.DropNoneImportable(paths.Length,
+            DiagnosticsBundle.Summarise(rejected, paths.Length, MaxLoggedNames));
     }
 
     /// <summary>
@@ -472,6 +530,8 @@ public sealed class MainForm : Form, IMessageFilter
         _checkForUpdatesMenuItem = new ToolStripMenuItem(Strings.Menu.CheckForUpdates, null,
             async (_, _) => await CheckForUpdatesAsync(manual: true));
         help.DropDownItems.Add(_checkForUpdatesMenuItem);
+        help.DropDownItems.Add(new ToolStripSeparator());
+        help.DropDownItems.Add(Strings.Menu.SaveDiagnostics, null, (_, _) => SaveDiagnostics());
         help.DropDownItems.Add(new ToolStripSeparator());
         help.DropDownItems.Add(Strings.Menu.About, null, (_, _) => MessageBox.Show(this,
             Strings.App.AboutBody,
@@ -679,8 +739,18 @@ public sealed class MainForm : Form, IMessageFilter
     /// appends its requests to the Composer's persisted history, alongside what's already there.</summary>
     public async void ImportSazFiles(IEnumerable<string> filePaths)
     {
-        var paths = filePaths.Where(SazFileRelay.IsSazFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (paths.Length == 0) return;
+        var requested = filePaths.ToArray();
+        var paths = requested.Where(SazFileRelay.IsSazFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (paths.Length == 0)
+        {
+            // Silence here covers a file association, a command line and a drop alike, so the
+            // reason one of them produced nothing has to be written down. File names only: the
+            // directory a user keeps captures in does not belong in an exported log.
+            if (requested.Length > 0)
+                AppendLog(Strings.Log.NoSazToImport(DiagnosticsBundle.Summarise(
+                    requested.Select(Path.GetFileName)!, requested.Length, MaxLoggedNames)));
+            return;
+        }
 
         BringToFront();
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
@@ -1458,11 +1528,109 @@ public sealed class MainForm : Form, IMessageFilter
         _sessionList.FilterText = string.IsNullOrWhiteSpace(current) ? term : $"{current} {term}";
     }
 
+    /// <summary>
+    /// Adds one line to the Log tab.
+    /// </summary>
+    /// <remarks>
+    /// Everything written here can leave the machine: Help &gt; Save diagnostics copies this text
+    /// into a zip the user forwards. Write call sites accordingly - no captured traffic, no
+    /// credentials, no key material - and keep in mind that a message may still name a host the
+    /// user browsed or a rule they wrote. <see cref="DiagnosticsBundle.SanitizeLogMessage"/> only
+    /// removes the account name and flattens control characters; it cannot judge content.
+    /// </remarks>
     private void AppendLog(string message)
     {
-        var line = Strings.Log.Line(DateTime.Now, message);
-        if (_logView.TextLength > 200_000) _logView.Clear();
+        // Sanitised before it reaches the catalogue's line format, so the account name and control
+        // characters are stripped from the message whatever wording wraps it.
+        var line = Strings.Log.Line(DateTime.Now, DiagnosticsBundle.SanitizeLogMessage(message));
+        // Drop the oldest half rather than clearing. A long-running session used to reach the cap
+        // and throw away every line, which left the diagnostics export empty for exactly the users
+        // whose problem took hours to show up.
+        //
+        // TextLength gates it because reading Text copies the whole control text - a large-object
+        // allocation on every line once the log is big. The trim then works off that copy alone:
+        // the two come from separate native calls and need not agree, and indexing one by the
+        // other could throw inside the one path that must never fail.
+        if (_logView.TextLength > LogCharacterCap)
+        {
+            var existing = _logView.Text;
+            if (existing.Length > LogCharacterCap)
+                _logView.Text = DiagnosticsBundle.TrimToNewestLines(existing, LogCharacterCap);
+        }
         _logView.AppendText(line);
+    }
+
+    private const int LogCharacterCap = 200_000;
+
+    /// <summary>How many names a log line lists before falling back to a count.</summary>
+    private const int MaxLoggedNames = 10;
+
+    /// <summary>
+    /// One line of machine state, logged at startup so that every exported diagnostics bundle
+    /// carries it. Deliberately state only - no listening port, upstream proxy, host remapping or
+    /// rule text - because this text is written to a file the user sends on to someone else.
+    /// </summary>
+    private string DescribeEnvironment() => Strings.Diagnostics.Environment(
+        typeof(MainForm).Assembly.GetName().Version?.ToString(3),
+        Environment.OSVersion.VersionString, RuntimeInformation.OSArchitecture, Environment.Version,
+        Environment.Is64BitProcess, IsElevated(), DeviceDpi * 100 / 96, CultureInfo.CurrentCulture.Name);
+
+    /// <summary>
+    /// Whether this process runs with administrator rights. Reported, never acted on: Piper has no
+    /// reason to elevate itself, and an elevated run is a symptom rather than a setting.
+    /// </summary>
+    private static bool IsElevated()
+    {
+        try
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch (SecurityException)
+        {
+            // An identity Piper may not query is not an identity Piper can call elevated.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Writes the log, the crash log and the machine summary to a zip the user chooses, for
+    /// attaching to a bug report. Nothing captured goes in it - see <see cref="DiagnosticsBundle"/>.
+    /// </summary>
+    private void SaveDiagnostics()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = Strings.Diagnostics.SaveCaption,
+            Filter = Strings.Diagnostics.SaveFilter,
+            DefaultExt = "zip",
+            AddExtension = true,
+            FileName = Strings.Diagnostics.SaveFileName(DateTime.Now),
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        // Logged before the write so that the bundle records the export that produced it.
+        AppendLog(Strings.Log.WritingDiagnostics(Path.GetFileName(dialog.FileName)));
+        try
+        {
+            using (var file = new FileStream(dialog.FileName, FileMode.Create, FileAccess.Write, FileShare.None))
+                DiagnosticsBundle.Write(file, DescribeEnvironment(), _logView.Text, Program.CrashLogPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppendLog(Strings.Log.DiagnosticsWriteFailed(ex.Message));
+            MessageBox.Show(this, Strings.Diagnostics.WriteFailedBody(ex.Message),
+                Strings.Diagnostics.WriteFailedCaption, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        // States only what the code enforces. The bundle's allowlist is per file, not per line, so
+        // it cannot promise anything about what a log message says - and some of them name a host
+        // the user filtered or a rule they wrote. Claiming more than that would be a promise the
+        // next AppendLog call site could quietly break.
+        MessageBox.Show(this,
+            Strings.Diagnostics.SavedBody(Path.GetFileName(dialog.FileName), DiagnosticsBundle.Contents),
+            Strings.Diagnostics.SavedCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void UpdateStatus()
