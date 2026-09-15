@@ -24,7 +24,7 @@ public sealed class AnalyticsConsentDialog : Form
         Text = "Help improve Piper";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
-        ClientSize = new Size(620, 470);
+        ClientSize = new Size(620, 560);
         MinimizeBox = false;
         MaximizeBox = false;
         ShowInTaskbar = false;
@@ -66,7 +66,8 @@ public sealed class AnalyticsConsentDialog : Form
             "•  Which features you use, and how a capture or certificate step turned out\n"
             + "•  The type of any error, with the top few stack frames\n"
             + "•  Piper's version and your Windows version\n"
-            + "•  A random ID stored on this machine, deleted if you turn this off",
+            + "•  A random ID stored on this machine, deleted if you turn this off\n"
+            + "•  Sent over HTTPS to analyticsnew.overwolf.com, run by Overwolf",
             TextWidth));
 
         var neverHeading = Heading("What is never sent", Palette.Accent);
@@ -81,7 +82,10 @@ public sealed class AnalyticsConsentDialog : Form
         {
             Text = "Piper's reporting can only send short words from a fixed list, so captured traffic "
                 + "cannot be included even by mistake. Reports wait in a plain text file you can read "
-                + "before they are sent.",
+                + "before they are sent.\r\n\r\n"
+                + "\"Anonymous\" means the reports carry nothing that identifies you. Sending them is "
+                + "still a web request, so it reveals your IP address and when you were using Piper, "
+                + "the same as visiting a website would.",
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,

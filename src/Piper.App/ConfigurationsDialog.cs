@@ -236,7 +236,9 @@ public sealed class ConfigurationsDialog : Form
 
         _analyticsEnabled = AddOption(panel, "Send anonymous feedback", analyticsEnabled,
             "Sends which features you use, the type of any error, and the app version, tied only to a "
-            + "random ID stored on this machine. Never sends captured traffic, URLs, hostnames, headers, bodies, "
+            + "random ID stored on this machine, over HTTPS to analyticsnew.overwolf.com. Sending is a web "
+            + "request, so it reveals your IP address and when you used Piper. Never sends captured traffic, "
+            + "URLs, hostnames, headers, bodies, "
             + "cookies, certificates, or your settings. Turning this off also deletes the identifiers it "
             + "reports with and discards anything not yet sent.",
             descriptionMaxWidth: 560);

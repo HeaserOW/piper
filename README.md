@@ -338,15 +338,21 @@ Piper can report anonymous usage and error information so its rough edges can be
 declining, closing the dialog, or pressing Escape all leave it off, and nothing is collected or
 transmitted until you agree.
 
+**Where it goes:** `analyticsnew.overwolf.com`, over HTTPS, run by Overwolf. "Anonymous" describes
+the contents of the reports, not the connection: sending one is a web request like any other, so it
+reveals your IP address and when you were using Piper.
+
 **What is sent:** which features you use, how a capture or certificate step turned out, the type of
 any error with its top few stack frames, Piper's version and your Windows version, and a random
-identifier stored in `HKCU\Software\Piper` so repeat reports can be grouped.
+identifier stored in `HKCU\Software\Piper` so repeat reports can be grouped. That identifier is
+deleted when you turn reporting off, but it is not removed by uninstalling Piper, so a reinstall on
+the same Windows account reports under the same identifier unless you turned reporting off first.
 
 **What is never sent:** captured traffic, URLs, hostnames, headers, bodies, cookies, credentials,
 certificates, private keys, file paths, exception messages, or your settings. Reporting can only
 carry values made of letters, digits, `.`, `_`, and `-`, checked when an event is recorded and again
 when it is read back from disk, so a URL or header cannot be reported even by a mistake in Piper's
-own code. Counts and durations are bucketed rather than exact.
+own code. Counts are reported as buckets rather than exact figures.
 
 Reports wait in `%LOCALAPPDATA%\Piper\analytics\pending.jsonl`, a plain text file you can read before
 it is sent. **Tools > Configurations > Privacy** holds the switch and a button that opens that
