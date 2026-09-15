@@ -32,7 +32,11 @@ keeping familiar workflows and file formats.
 ## Why this exists
 
 The **Composer** puts request search inside the editor: type a query, see matching captured
-requests, load one, edit, and send.
+requests, load one, edit, and send. Everything you have sent is grouped under its host in a
+collapsible tree, with repeat sends of one endpoint folded into a single row and a count, and the
+response to the last send is shown in the Composer itself rather than only in the capture grid.
+To start from something you captured, drag it in from the grid and drop it anywhere on the
+Composer -- or onto its tab, which works from whichever tab you are on.
 
 The same query grammar drives the session-list filter and the composer search, so a query
 you learn in one place works in the other.
@@ -130,6 +134,7 @@ method:POST host:api status:>=400 -is:image body:"order"
 | `F3` | select the next session matching the last find |
 | `Ctrl+Shift+F` | focus the session filter box, hiding non-matches |
 | `Ctrl+K` | jump to the Composer search |
+| `Left` / `Right` | collapse / expand a Composer history group |
 | `Ctrl+E` | send the selected session to the Composer |
 | `Ctrl+T` | open the TextWizard |
 | `Ctrl+S` | save selected sessions as a Fiddler SAZ archive |
@@ -137,6 +142,7 @@ method:POST host:api status:>=400 -is:image body:"order"
 | `Ctrl+C` | copy selected URLs |
 | `Del` | remove selected sessions |
 | middle-click / double-click | send a session to the Composer |
+| drag a session | drop it anywhere on the Composer or AutoResponder, or onto its tab |
 | `Ctrl+MouseWheel` | resize the UI font |
 | `Ctrl++` / `Ctrl+-` | resize the UI font a step at a time |
 | `Ctrl+0` | reset the UI font to 100% |
@@ -188,6 +194,9 @@ targets, so `Invoke-WebRequest -Proxy` would never reach Piper.
 - Virtual-mode session grid that stays responsive under load
 - Request and response inspectors: headers, decoded body, pretty-printed JSON, hex dump
 - Composer with search, raw-request editing, repeat-N, and verbatim header sending
+- Composer history grouped into collapsible hosts, repeat sends folded into one counted row, and
+  the response to the last send inspectable without leaving the Composer. Which hosts you have
+  collapsed is remembered across restarts; a host you have not seen before starts expanded
 - Copy as curl, per-host filtering, dark theme
 - Importing and exporting Fiddler SAZ session archives, by drag-and-drop or **File > Open SAZ
   capture...**; a request-only `.raz` capture is appended to the Composer's history (no responses

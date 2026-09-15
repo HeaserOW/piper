@@ -8,26 +8,21 @@ using Piper.Core.Sessions;
 namespace Piper.App.Controls;
 
 /// <summary>
-/// Compose and replay requests, with a live search over everything already captured.
+/// Compose and replay requests, with a live search over everything already sent from here.
 /// </summary>
 /// <remarks>
-/// The search pane makes finding part of composing: type a query, see matching
-/// captured requests, load one, edit, send. The same <see cref="SearchQuery"/> grammar as
-/// the session-list filter, so a query learned in one place works in the other.
+/// The history pane makes finding part of composing: type a query, see matching requests you have
+/// sent, load one, edit, send. It uses the same <see cref="SearchQuery"/> grammar as the
+/// session-list filter, so a query learned in one place works in the other. Sending shows the
+/// response in this panel too, so reading it never means going back to the capture grid.
 /// </remarks>
 public sealed class ComposerPanel : UserControl
 {
     private readonly SessionStore _store;
     private readonly RequestExecutor _executor;
 
-    // Search pane
-    private readonly TextBox _searchBox;
-    private readonly ListView _results;
-    private readonly Label _resultCount;
-    private readonly SolidBrush _resultSurfaceBrush = new(Palette.Surface);
-    private readonly SolidBrush _resultSelectionBrush = new(Palette.Selection);
-    private readonly SolidBrush _resultHeaderBrush = new(Palette.SurfaceAlt);
-    private Session[] _matches = [];
+    // History pane
+    private readonly ComposerHistoryTree _historyTree;
 
     // Editor pane
     private readonly ComboBox _method;
@@ -40,10 +35,9 @@ public sealed class ComposerPanel : UserControl
     private const int RawTabIndex = 1;
     private readonly Button _execute;
     private readonly Label _status;
-    // Also carries the search box's grammar examples, which need longer than the 5s default to
-    // read. Truncated history cells share the instance and simply stay up as long as the hover.
-    private readonly ToolTip _historyToolTip = new() { AutoPopDelay = 30000 };
-    private string? _historyToolTipText;
+    // The same inspector the capture grid uses, so a composed response is read with exactly the
+    // tooling - pretty-printed JSON, hex, image preview - that a captured one gets.
+    private readonly MessageInspector _response = new("Response", showImageViewer: true) { Dock = DockStyle.Fill };
     // Persisted Composer history belongs in this panel, not in SessionStore. The latter drives
     // the capture list, so restoring history there made an old composed request appear as the
     // first "captured" session every time Piper started.
@@ -58,104 +52,11 @@ public sealed class ComposerPanel : UserControl
 
         _history.AddRange(ComposerHistoryStore.Load());
 
-        // ---------------------------------------------------------- search pane
+        // --------------------------------------------------------- history pane
 
-        _searchBox = new TextBox
-        {
-            Dock = DockStyle.Top,
-            Font = Palette.Mono,
-            // Examples live in the tooltip below, not in a label under the box and not in this
-            // placeholder: a dim label flush under the box reads as a query already typed in, and
-            // this pane is narrow enough that a placeholder long enough to teach the grammar just
-            // gets clipped. Help > Search syntax remains the full reference.
-            PlaceholderText = "Search sent requests...",
-        };
-        _searchBox.TextChanged += (_, _) => RunSearch();
-        _searchBox.KeyDown += OnSearchKeyDown;
-        _historyToolTip.SetToolTip(_searchBox, """
-            Filter your sent requests. Terms are ANDed.
-
-            method:POST   host:api   status:4xx
-            body:"user_id"   header:Authorization
-            size:>100kb   dur:>500
-            is:json   -is:image   /v[0-9]+\/orders/
-
-            Full grammar: Help > Search syntax
-            """.ReplaceLineEndings("\r\n"));
-
-        _resultCount = new Label
-        {
-            Dock = DockStyle.Bottom,
-            Height = 18,
-            ForeColor = Palette.TextDim,
-            Padding = new Padding(4, 2, 0, 0),
-        };
-
-        _results = new ListView
-        {
-            Dock = DockStyle.Fill,
-            View = View.Details,
-            FullRowSelect = true,
-            VirtualMode = true,
-            OwnerDraw = true,
-            HideSelection = false,
-            MultiSelect = true,
-            HeaderStyle = ColumnHeaderStyle.Nonclickable,
-            Font = Palette.Mono,
-        };
-        DarkListView.EnableDoubleBuffering(_results);
-        _results.Columns.Add("#", 46, HorizontalAlignment.Right);
-        _results.Columns.Add("St", 40, HorizontalAlignment.Left);
-        _results.Columns.Add("Method", 58, HorizontalAlignment.Left);
-        _results.Columns.Add("Host", 130, HorizontalAlignment.Left);
-        _results.Columns.Add("Path", 260, HorizontalAlignment.Left);
-        DarkListView.AddFillerColumn(_results);
-        _results.RetrieveVirtualItem += OnRetrieveResult;
-        _results.DrawColumnHeader += OnDrawResultHeader;
-        _results.DrawSubItem += OnDrawResultSubItem;
-        _results.MouseMove += OnResultsMouseMove;
-        _results.MouseLeave += (_, _) => SetHistoryToolTip(null);
-        _results.DoubleClick += (_, _) => LoadSelectedResult();
-        _results.MouseDown += OnResultsMouseDown;
-        _results.ContextMenuStrip = BuildHistoryMenu();
-        _results.KeyDown += (_, e) =>
-        {
-            if (e.Control && e.KeyCode == Keys.F)
-            {
-                FocusSearch();
-                e.SuppressKeyPress = true;
-                e.Handled = true;
-                return;
-            }
-            if (e.KeyCode == Keys.Delete)
-            {
-                RemoveSelectedHistory();
-                e.Handled = true;
-                return;
-            }
-            if (e.KeyCode != Keys.Enter) return;
-            LoadSelectedResult();
-            e.Handled = true;
-        };
-
-        var searchPane = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
-        searchPane.Controls.Add(_results);
-        searchPane.Controls.Add(_resultCount);
-        searchPane.Controls.Add(_searchBox);
-
-        var searchHeader = new Label
-        {
-            Dock = DockStyle.Top,
-            Height = 28,
-            Text = "  Composer History",
-            ForeColor = Palette.Text,
-            Font = Palette.UiFontBold,
-            Padding = new Padding(0, 5, 0, 0),
-        };
-
-        var searchContainer = new Panel { Dock = DockStyle.Fill };
-        searchContainer.Controls.Add(searchPane);
-        searchContainer.Controls.Add(searchHeader);
+        _historyTree = new ComposerHistoryTree();
+        _historyTree.SessionActivated += (_, session) => LoadSession(session);
+        _historyTree.RemoveRequested += (_, sessions) => RemoveFromHistory(sessions);
 
         // ---------------------------------------------------------- editor pane
 
@@ -236,10 +137,24 @@ public sealed class ComposerPanel : UserControl
         editorSplit.Panel1.Controls.Add(_editorTabs);
         editorSplit.Panel2.Controls.Add(bodyPane);
 
+        var requestPane = new Panel { Dock = DockStyle.Fill };
+        requestPane.Controls.Add(editorSplit);
+        requestPane.Controls.Add(methodRow);
+
+        _responseSplit = new SplitContainer
+        {
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterWidth = 4,
+            Panel1MinSize = 120,
+            Panel2MinSize = 80,
+        };
+        _responseSplit.Panel1.Controls.Add(requestPane);
+        _responseSplit.Panel2.Controls.Add(_response);
+
         var editorPane = new Panel { Dock = DockStyle.Fill };
-        editorPane.Controls.Add(editorSplit);
+        editorPane.Controls.Add(_responseSplit);
         editorPane.Controls.Add(_status);
-        editorPane.Controls.Add(methodRow);
 
         // ------------------------------------------------------------- assembly
 
@@ -250,7 +165,7 @@ public sealed class ComposerPanel : UserControl
             SplitterWidth = 4,
         };
         split.Panel1MinSize = 260;
-        split.Panel1.Controls.Add(searchContainer);
+        split.Panel1.Controls.Add(_historyTree);
         split.Panel2.Controls.Add(editorPane);
         Controls.Add(split);
 
@@ -269,11 +184,73 @@ public sealed class ComposerPanel : UserControl
         };
         _searchTimer.Start();
 
-        RunSearch();
+        // Accept a session dropped anywhere on the Composer, not just on the tab above it, the way
+        // the AutoResponder panel already does. The tab strip alone is a 20px target, and it is
+        // the only one reachable while a different tab is showing, so the two paths complement
+        // each other rather than replace each other.
+        EnableSessionDrop(this);
+
+        _historyTree.SetHistory(_history);
         UpdateBodyWarning();
     }
 
+    /// <summary>
+    /// Registers every control on this panel as a session drop target, mirroring
+    /// <c>MainForm.EnableSazFileDrop</c>.
+    /// </summary>
+    /// <remarks>
+    /// Recursive rather than a list of the big controls, because a drop lands on the deepest
+    /// control under the cursor and that recursion has already set <see cref="Control.AllowDrop"/>
+    /// on all of them. Any control left out would therefore not fall through to this panel -- it
+    /// would swallow the drop and do nothing, which is worse than not accepting it at all.
+    ///
+    /// A control that already claims drops is left to whoever claimed it. At this point in
+    /// construction that is only the response inspector's image and video targets, which load a
+    /// dropped session's response as media; running both handlers would make one drop do two
+    /// unrelated things. Their children are still visited, because the inspector's tab strip claims
+    /// itself without claiming the pages inside it, and those pages would otherwise stay dead.
+    ///
+    /// That test depends on <c>MainForm.EnableSazFileDrop</c> registering unconditionally, which it
+    /// does: it runs after this (the panel must exist before the form can walk it), so by then every
+    /// control here already has <see cref="Control.AllowDrop"/> set. Giving that method the same
+    /// skip-if-claimed guard would silently stop <c>.saz</c> and <c>.raz</c> files being droppable
+    /// anywhere on the Composer -- silently, because these controls stay registered OLE targets and
+    /// so never fall through to an ancestor that would have taken the file.
+    /// </remarks>
+    private void EnableSessionDrop(Control control)
+    {
+        if (!control.AllowDrop)
+        {
+            control.AllowDrop = true;
+            control.DragEnter += OnSessionDragOver;
+            control.DragOver += OnSessionDragOver;
+            control.DragDrop += OnSessionDrop;
+        }
+
+        foreach (Control child in control.Controls) EnableSessionDrop(child);
+    }
+
+    private static void OnSessionDragOver(object? sender, DragEventArgs e)
+    {
+        if (DraggedSession(e) is not null) e.Effect = DragDropEffects.Copy;
+    }
+
+    private void OnSessionDrop(object? sender, DragEventArgs e)
+    {
+        if (DraggedSession(e) is { } session) LoadSession(session);
+    }
+
+    /// <summary>The grid drags the <see cref="Session"/> object itself, not a serialised form of it.</summary>
+    /// <remarks>
+    /// A request with no URL at all cannot seed the editor, so it is refused outright rather than
+    /// silently loading a blank one.
+    /// </remarks>
+    private static Session? DraggedSession(DragEventArgs e) =>
+        e.Data?.GetData(typeof(Session)) is Session { Request.Url: not null } session ? session : null;
+
     private readonly SplitContainer _split;
+    private readonly SplitContainer _responseSplit;
+    private bool _responseSplitPositioned;
     private readonly System.Windows.Forms.Timer _searchTimer;
     private volatile bool _searchDirty;
 
@@ -283,6 +260,19 @@ public sealed class ComposerPanel : UserControl
         // Set the splitter once the control has a real width; doing it in the constructor
         // clamps against the design-time size.
         if (_split.Width > 400) _split.SplitterDistance = Math.Min(380, _split.Width / 3);
+    }
+
+    /// <summary>
+    /// Gives the request editor rather more room than the response once the pane has a real
+    /// height. As with the outer splitter, doing this in the constructor is clamped against the
+    /// design-time size.
+    /// </summary>
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (_responseSplitPositioned || _responseSplit.Height <= 300) return;
+        _responseSplit.SplitterDistance = _responseSplit.Height * 3 / 5;
+        _responseSplitPositioned = true;
     }
 
     private static TextBox MakeEditor(string initial) => new()
@@ -304,100 +294,9 @@ public sealed class ComposerPanel : UserControl
         return page;
     }
 
-    // ------------------------------------------------------------------ search
+    // ----------------------------------------------------------------- history
 
-    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
-    {
-        // Down/Enter from the search box moves into the results without touching the mouse.
-        if (e.KeyCode == Keys.Down && _matches.Length > 0)
-        {
-            _results.Focus();
-            if (_results.SelectedIndices.Count == 0) _results.SelectedIndices.Add(0);
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.Enter && _matches.Length > 0)
-        {
-            if (_results.SelectedIndices.Count == 0) _results.SelectedIndices.Add(0);
-            LoadSelectedResult();
-            e.Handled = true;
-            e.SuppressKeyPress = true;
-        }
-    }
-
-    private void RunSearch()
-    {
-        var query = SearchQuery.Parse(_searchBox.Text);
-        _searchBox.ForeColor = query.Warnings.Count > 0 ? Palette.StatusClientError : Palette.Text;
-
-        // Only requests are useful here, so drop undecrypted tunnels. This pane is the
-        // Composer's own history, not a window into all captured traffic, so only sessions
-        // actually sent from the Composer belong here.
-        _matches = _history
-            .Where(s => !s.IsTunnel && s.Request is not null && query.Matches(s))
-            .OrderByDescending(s => s.Completed ?? s.Started)
-            .ToArray();
-
-        _results.BeginUpdate();
-        _results.VirtualListSize = _matches.Length;
-        _results.EndUpdate();
-        _results.Invalidate();
-
-        _resultCount.Text = query.Warnings.Count > 0
-            ? $"{_matches.Length:N0} matches - {query.Warnings[0]}"
-            : $"{_matches.Length:N0} sent requests";
-    }
-
-    private void OnRetrieveResult(object? sender, RetrieveVirtualItemEventArgs e)
-    {
-        if (e.ItemIndex < 0 || e.ItemIndex >= _matches.Length)
-        {
-            e.Item = new ListViewItem(string.Empty);
-            return;
-        }
-
-        var session = _matches[e.ItemIndex];
-        var item = new ListViewItem(session.Id.ToString());
-        item.SubItems.Add(session.StatusText);
-        item.SubItems.Add(session.Method);
-        item.SubItems.Add(session.Host);
-        item.SubItems.Add(session.Path);
-        item.SubItems.Add(string.Empty); // filler column
-        item.Tag = session;
-        e.Item = item;
-    }
-
-    private void OnResultsMouseDown(object? sender, MouseEventArgs e)
-    {
-        if (e.Button != MouseButtons.Right || _results.GetItemAt(e.X, e.Y) is not { } item) return;
-        _results.SelectedIndices.Clear();
-        item.Selected = true;
-        item.Focused = true;
-    }
-
-    private void OnResultsMouseMove(object? sender, MouseEventArgs e)
-    {
-        var hit = _results.HitTest(e.Location);
-        if (hit.Item is null || hit.SubItem is null)
-        {
-            SetHistoryToolTip(null);
-            return;
-        }
-
-        var columnIndex = hit.Item.SubItems.IndexOf(hit.SubItem);
-        var text = hit.SubItem.Text;
-        var availableWidth = _results.Columns[columnIndex].Width - 8;
-        var textWidth = TextRenderer.MeasureText(text, Palette.Mono, Size.Empty,
-            TextFormatFlags.SingleLine | TextFormatFlags.NoPadding).Width;
-
-        SetHistoryToolTip(textWidth > availableWidth ? text : null);
-    }
-
-    private void SetHistoryToolTip(string? text)
-    {
-        if (_historyToolTipText == text) return;
-        _historyToolTipText = text;
-        _historyToolTip.SetToolTip(_results, text);
-    }
+    private void RunSearch() => _historyTree.Rebuild();
 
     /// <summary>Appends sessions (e.g. a Fiddler "request-only" archive import) to the persisted
     /// Composer history, alongside whatever is already there. Each one is reduced to exactly what
@@ -425,66 +324,16 @@ public sealed class ComposerPanel : UserControl
         _searchDirty = true;
     }
 
-    private ContextMenuStrip BuildHistoryMenu()
+    /// <summary>Drops the given sends from the persisted history. The tree hands over every send
+    /// behind the selected rows, so removing a repeated request removes all of its sends rather
+    /// than leaving a row that still looks the same with a smaller count.</summary>
+    private void RemoveFromHistory(IReadOnlyList<Session> sessions)
     {
-        var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var remove = new ToolStripMenuItem("&Remove from history\tDel", null, (_, _) => RemoveSelectedHistory());
-        menu.Items.Add(remove);
-        menu.Opening += (_, _) => remove.Enabled = _results.SelectedIndices.Cast<int>()
-            .Any(index => index >= 0 && index < _matches.Length);
-        return menu;
-    }
+        var doomed = sessions.ToHashSet();
+        if (doomed.Count == 0 || _history.RemoveAll(doomed.Contains) == 0) return;
 
-    private void RemoveSelectedHistory()
-    {
-        var selected = _results.SelectedIndices.Cast<int>()
-            .Where(index => index >= 0 && index < _matches.Length)
-            .Select(index => _matches[index])
-            .ToHashSet();
-        if (selected.Count == 0) return;
-
-        _history.RemoveAll(selected.Contains);
         ComposerHistoryStore.Save(_history);
         RunSearch();
-    }
-
-    private void OnDrawResultHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
-    {
-        if (_resultHeaderBrush.Color != Palette.SurfaceAlt) _resultHeaderBrush.Color = Palette.SurfaceAlt;
-        e.Graphics.FillRectangle(_resultHeaderBrush, e.Bounds);
-        TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? string.Empty, Palette.UiFont,
-            Rectangle.Inflate(e.Bounds, -5, 0), Palette.TextDim,
-            TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-    }
-
-    private void OnDrawResultSubItem(object? sender, DrawListViewSubItemEventArgs e)
-    {
-        if (e.Item is null) return;
-        var session = e.Item.Tag as Session;
-        var selected = e.Item.Selected;
-
-        if (_resultSurfaceBrush.Color != Palette.Surface) _resultSurfaceBrush.Color = Palette.Surface;
-        if (_resultSelectionBrush.Color != Palette.Selection) _resultSelectionBrush.Color = Palette.Selection;
-        e.Graphics.FillRectangle(selected ? _resultSelectionBrush : _resultSurfaceBrush, e.Bounds);
-
-        var colour = session is null || selected
-            ? Palette.Text
-            : Palette.ForStatus(session);
-
-        if (e.ColumnIndex == 1 && session is not null)
-            colour = Palette.ForStatus(session);
-
-        TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? string.Empty, Palette.Mono,
-            Rectangle.Inflate(e.Bounds, -4, 0), colour,
-            TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-    }
-
-    private void LoadSelectedResult()
-    {
-        if (_results.SelectedIndices.Count == 0) return;
-        var index = _results.SelectedIndices[0];
-        if (index < 0 || index >= _matches.Length) return;
-        LoadSession(_matches[index]);
     }
 
     // ------------------------------------------------------------------ editor
@@ -514,6 +363,9 @@ public sealed class ComposerPanel : UserControl
             : string.Empty;
 
         _rawEditor.Text = BuildRawText();
+        // History is persisted as raw request text only, so a loaded entry has no response of its
+        // own. Leaving the previous send's body on screen beside it would read as this request's.
+        ShowResponse(null, "Response   (not sent yet)");
         _status.Text = $"Loaded #{session.Id} - edit and press Send (or Enter in the URL box).";
         // Raw shows the request line, headers and body at once, which is what you want when
         // reviewing something already sent -- and it is what every caller here loads a session for.
@@ -602,7 +454,7 @@ public sealed class ComposerPanel : UserControl
             return;
         }
 
-        await ExecuteRequestAsync(template, addToHistory: true);
+        await ExecuteRequestAsync(template, fromEditor: true);
     }
 
     /// <summary>Replays a captured request without changing the Composer editor fields.</summary>
@@ -615,11 +467,22 @@ public sealed class ComposerPanel : UserControl
         // connection. Reusing an HTTP/2 or HTTP/3 capture's request-line version here makes
         // an h1 origin correctly reject it with 505 HTTP Version Not Supported.
         replay.HttpVersion = "HTTP/1.1";
-        return ExecuteRequestAsync(replay, addToHistory: false);
+        return ExecuteRequestAsync(replay, fromEditor: false);
     }
 
-    private async Task ExecuteRequestAsync(HttpRequestData template, bool addToHistory)
+    /// <param name="fromEditor">
+    /// Whether this send came from the Composer's own editor. A Ctrl+R replay does not, so it must
+    /// leave both the history and the response pane alone: a body shown beneath a request that did
+    /// not produce it reads as that request's, which is the same trap <see cref="LoadSession"/>
+    /// clears the pane to avoid.
+    /// </param>
+    private async Task ExecuteRequestAsync(HttpRequestData template, bool fromEditor)
     {
+        void Surface(HttpResponseData? response, string summary)
+        {
+            if (fromEditor) ShowResponse(response, summary);
+        }
+
         if (_inFlight is not null)
         {
             await _inFlight.CancelAsync();
@@ -634,7 +497,7 @@ public sealed class ComposerPanel : UserControl
         try
         {
             var session = await _executor.ExecuteAsync(template, _inFlight.Token);
-            if (addToHistory)
+            if (fromEditor)
             {
                 // The explicit Composer Send action owns this history. Ctrl+R replays are
                 // captured in the session list, but intentionally do not become history.
@@ -647,21 +510,26 @@ public sealed class ComposerPanel : UserControl
             {
                 _status.Text = $"Failed: {session.Error}{CertificateFailureHint.For(session.Error)}";
                 _status.ForeColor = Palette.StatusServerError;
+                Surface(null, $"Response   FAILED - {session.Error}{CertificateFailureHint.For(session.Error)}");
             }
             else
             {
                 _status.ForeColor = Palette.ForStatus(session.StatusCode, false, false, false);
                 _status.Text = $"#{session.Id}  {session.StatusCode}  {session.Duration.TotalMilliseconds:N0} ms  {Format.Size(session.ResponseSize)}";
+                Surface(session.Response,
+                    $"Response   {session.Response?.StartLine}   {session.Duration.TotalMilliseconds:N0} ms   {Format.Size(session.ResponseSize)}");
             }
         }
         catch (OperationCanceledException)
         {
             _status.Text = "Cancelled.";
+            Surface(null, "Response   (cancelled)");
         }
         catch (Exception ex)
         {
             _status.Text = $"Error: {ex.Message}";
             _status.ForeColor = Palette.StatusServerError;
+            Surface(null, $"Response   ERROR - {ex.Message}");
         }
         finally
         {
@@ -671,12 +539,19 @@ public sealed class ComposerPanel : UserControl
         }
     }
 
-    /// <summary>Puts focus in the search box; used by the Ctrl+K shortcut.</summary>
-    public void FocusSearch()
+    /// <summary>
+    /// Points the response inspector at what came back, so reading it never means leaving the
+    /// Composer for the capture grid. Always called on every send outcome, including the failing
+    /// ones, so a stale body can never sit beside a request that did not produce it.
+    /// </summary>
+    private void ShowResponse(HttpResponseData? response, string summary)
     {
-        _searchBox.Focus();
-        _searchBox.SelectAll();
+        _response.SetMessage(response, summary);
+        if (response is not null) _response.SelectBestTab();
     }
+
+    /// <summary>Puts focus in the search box; used by the Ctrl+K shortcut.</summary>
+    public void FocusSearch() => _historyTree.FocusSearch();
 
     protected override void Dispose(bool disposing)
     {
@@ -684,10 +559,6 @@ public sealed class ComposerPanel : UserControl
         {
             _searchTimer.Dispose();
             _inFlight?.Dispose();
-            _historyToolTip.Dispose();
-            _resultSurfaceBrush.Dispose();
-            _resultSelectionBrush.Dispose();
-            _resultHeaderBrush.Dispose();
         }
         base.Dispose(disposing);
     }
