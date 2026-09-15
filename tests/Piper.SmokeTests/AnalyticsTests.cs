@@ -662,8 +662,41 @@ internal static class AnalyticsTests
             // backoff, and leave Piper making a request per event per flush forever while throwing
             // all of them away, with an empty spool reading as everything working.
             runner.AreEqual(1, server.RequestCount, "delivery stops at the refusal instead of marching on");
-            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "the refused events are kept, not discarded");
-            runner.AreEqual(2, File.ReadAllLines(temp.SpoolPath + ".sending").Count(l => l.Length > 0), "both of them");
+            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "the batch behind the refusal is kept");
+            runner.AreEqual(
+                1,
+                File.ReadAllLines(temp.SpoolPath + ".sending").Count(l => l.Length > 0),
+                "minus the refused event itself, which would otherwise sit at the head forever");
+        });
+
+        await runner.RunAsync("analytics: one refused event does not block the ones behind it", async () =>
+        {
+            using var server = new LoopbackCollector();
+            using var temp = new TempAnalytics();
+            temp.Settings.Enabled = true;
+            temp.Settings.NoticeShownVersion = "0.4.0";
+            using var client = temp.CreateClient(server.Endpoint);
+
+            client.Track(AnalyticsEvents.AppStarted);
+            client.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
+            client.Track(AnalyticsEvents.FirstSessionCaptured);
+
+            // The collector takes everything except the first request. If a refusal left the event
+            // at the head of the file, every later flush would re-claim the same file, be refused on
+            // the same line and drop nothing - killing reporting for this install permanently, and
+            // across restarts, because the file outlives the process.
+            server.RejectFirst = 1;
+            await client.FlushAsync();
+            await client.FlushAsync();
+            await client.FlushAsync();
+
+            runner.IsTrue(!File.Exists(temp.SpoolPath + ".sending"), "the queue drains instead of wedging");
+            var names = server.Requests
+                .Where(r => r.Contains("Name=", StringComparison.Ordinal))
+                .Select(r => r.Split("Name=")[1].Split('&')[0])
+                .ToArray();
+            runner.IsTrue(names.Contains(AnalyticsEvents.CertTrusted), "the event behind the refusal is delivered");
+            runner.IsTrue(names.Contains(AnalyticsEvents.FirstSessionCaptured), "and so is the one behind that");
         });
 
         await runner.RunAsync("analytics: a collector that refuses everything stops being called", async () =>
@@ -674,14 +707,20 @@ internal static class AnalyticsTests
             temp.Settings.NoticeShownVersion = "0.4.0";
             using var client = temp.CreateClient(server.Endpoint);
 
+            // More events than the collector will be given the chance to refuse, so there is a
+            // remainder to look at once delivery gives up.
             client.Track(AnalyticsEvents.AppStarted);
+            for (var i = 0; i < 29; i++) client.Track(AnalyticsEvents.FeatureUsed, (AnalyticsProperties.Feature, "find"));
 
-            // Backoff alone would still mean a request every 30 minutes from every opted-in machine
-            // for a contract that is never going to work, so a long run of refusals ends it.
+            // Retrying forever would mean a request per event from every opted-in machine for a
+            // contract that is never going to work, so a long run of refusals ends delivery.
             for (var attempt = 0; attempt < 40; attempt++) await client.FlushAsync();
 
             runner.IsTrue(server.RequestCount <= 20, $"stopped after a bounded number of refusals, made {server.RequestCount}");
-            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "and the events stay on disk as evidence");
+            runner.IsTrue(File.Exists(temp.SpoolPath + ".sending"), "and what it never got to stays on disk as evidence");
+            runner.IsTrue(
+                File.ReadAllLines(temp.SpoolPath + ".sending").Count(l => l.Length > 0) >= 10,
+                "with the bulk of it intact rather than thrown away one request at a time");
         });
 
         await runner.RunAsync("analytics: a non-loopback endpoint must be https", () =>
@@ -772,6 +811,9 @@ internal static class AnalyticsTests
         /// <summary>Accept this many requests, then refuse - delivery is one request per event.</summary>
         public int FailAfter { get; set; } = int.MaxValue;
 
+        /// <summary>Refuse this many requests with 404 before accepting anything.</summary>
+        public int RejectFirst { get; set; }
+
         /// <summary>Every request seen, unescaped, so a test can assert on what was retried.</summary>
         public List<string> Requests { get; } = [];
 
@@ -798,7 +840,10 @@ internal static class AnalyticsTests
 
                 RequestCount++;
                 BeforeRespond?.Invoke();
-                context.Response.StatusCode = RequestCount > FailAfter ? 503 : StatusCode;
+                context.Response.StatusCode =
+                    RequestCount <= RejectFirst ? 404
+                    : RequestCount > FailAfter ? 503
+                    : StatusCode;
                 context.Response.Close();
             }
         }

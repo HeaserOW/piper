@@ -13,6 +13,7 @@ public sealed class MainForm : Form, IMessageFilter
 {
     private readonly SessionStore _store = new();
     private bool _reportedFirstSession;
+    private int _lastScannedSessionCount;
     private readonly ProxyOptions _options = new();
     private readonly CertificateAuthority _ca;
     private readonly ProxyServer _proxy;
@@ -1645,8 +1646,10 @@ public sealed class MainForm : Form, IMessageFilter
         var total = _store.Count;
         // Reporting is checked before the scan, not after: a user who declined should not pay for
         // copying the session store, and the latch must not close while reporting is off - otherwise
-        // someone who opts in mid-run could never report this step for the rest of the run.
-        if (total > 0 && !_reportedFirstSession && Analytics.IsEnabled
+        // someone who opts in mid-run could never report this step for the rest of the run. The
+        // count is checked too, so the scan runs only when a session has arrived since the last one,
+        // rather than on every status update during the window before real traffic appears.
+        if (total > _lastScannedSessionCount && !_reportedFirstSession && Analytics.IsEnabled
             && _store.Snapshot().Any(session => !session.IsUpdateCheck))
         {
             // Completes the activation funnel: installed, trusted, capturing, and now actually
@@ -1659,6 +1662,8 @@ public sealed class MainForm : Form, IMessageFilter
             _reportedFirstSession = true;
             Analytics.Track(AnalyticsEvents.FirstSessionCaptured);
         }
+
+        _lastScannedSessionCount = total;
 
         var selected = _sessionList.SelectedSessionCount;
         _sessionsLabel.Text = selected == 0

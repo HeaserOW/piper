@@ -348,25 +348,37 @@ public sealed class AnalyticsClient : IDisposable
         }
         else
         {
-            // Drop what did get through, so a retry does not count those events twice.
-            if (delivered > 0)
+            // Everything before the first undelivered event goes, so it is not counted twice.
+            //
+            // A refusal takes the refused event with it. Keeping it would leave it at the head of
+            // the in-flight file, where every later flush re-claims the same file, is refused on the
+            // same line, and drops nothing - so one event the collector will not take kills
+            // reporting for that install permanently, across restarts, while newer events are
+            // destroyed as the spool rolls. The contract-level case is covered separately by the
+            // rejection counter, which stops delivery when nothing at all is being accepted.
+            var dropThrough = rejected ? _batchLines[delivered] + 1 : _batchLines[delivered];
+            if (dropThrough > 0)
             {
                 lock (_spoolLock)
                 {
-                    // Removed by the line the first undelivered event came from, so everything after
-                    // it survives untouched - the events that were not sent, and any lines the claim
-                    // never reached. An opt-out during the request already deleted the spool;
-                    // putting anything back would resurrect it, so honour the newer decision.
-                    if (_settings.Enabled) DropInflightPrefix(_batchLines[delivered]);
+                    // An opt-out during the request already deleted the spool; putting anything back
+                    // would resurrect it, so honour the newer decision.
+                    if (_settings.Enabled) DropInflightPrefix(dropThrough);
                     else DiscardInflight();
                 }
             }
 
-            // Back off rather than retry a dead endpoint every minute for the life of the process.
-            _consecutiveFailures = Math.Min(_consecutiveFailures + 1, 16);
-            var delay = TimeSpan.FromSeconds(Math.Min(
-                FlushInterval.TotalSeconds * Math.Pow(2, _consecutiveFailures), MaxBackoff.TotalSeconds));
-            _nextAttempt = DateTimeOffset.UtcNow + delay;
+            // Backoff is for a collector that cannot be reached, not for one that answered. A
+            // refusal already moved the queue on by discarding the event, so delaying here would
+            // stall the events behind it for half an hour over one the collector will never take;
+            // the rejection counter is what bounds that case, and it stops delivery outright.
+            if (!rejected)
+            {
+                _consecutiveFailures = Math.Min(_consecutiveFailures + 1, 16);
+                var delay = TimeSpan.FromSeconds(Math.Min(
+                    FlushInterval.TotalSeconds * Math.Pow(2, _consecutiveFailures), MaxBackoff.TotalSeconds));
+                _nextAttempt = DateTimeOffset.UtcNow + delay;
+            }
         }
     }
 
@@ -625,6 +637,7 @@ public sealed class AnalyticsClient : IDisposable
         Failed,
     }
 
+    /// <summary>Sends one event, reporting which of those three happened.</summary>
     private async Task<Delivery> TryDeliverAsync(AnalyticsEvent recorded, CancellationToken cancellationToken)
     {
         try
