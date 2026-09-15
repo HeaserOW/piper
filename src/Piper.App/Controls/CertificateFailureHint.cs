@@ -11,6 +11,6 @@ internal static class CertificateFailureHint
     /// is on -- when it's off, the callback never rejects a certificate, so this text can't appear.</summary>
     public static string For(string? error) =>
         error is not null && error.Contains("RemoteCertificate", StringComparison.Ordinal)
-            ? "  ->  If you trust this origin, turn off \"Verify origin server certificates\" in Configurations > HTTPS."
+            ? Strings.CertificateHint.VerifyOriginCertificates
             : string.Empty;
 }

@@ -56,7 +56,7 @@ public sealed class FilterPanel : UserControl
         _useFilters = new CheckBox
         {
             Dock = DockStyle.Fill,
-            Text = "Use Filters",
+            Text = Strings.Filters.UseFilters,
             AutoSize = false,
             Padding = new Padding(6, 10, 0, 0),
             Font = Palette.UiFontBold,
@@ -81,7 +81,7 @@ public sealed class FilterPanel : UserControl
             DropDownStyle = ComboBoxStyle.DropDownList,
             Font = Palette.UiFont,
         };
-        _hostsMode.Items.AddRange(["Show only the following Hosts", "Hide the following Hosts"]);
+        _hostsMode.Items.AddRange([Strings.Filters.ShowOnlyTheseHosts, Strings.Filters.HideTheseHosts]);
         _hostsMode.SelectedIndex = 0;
         _hostsMode.SelectedIndexChanged += (_, _) => OnCriteriaChanged();
 
@@ -89,7 +89,7 @@ public sealed class FilterPanel : UserControl
         {
             Dock = DockStyle.Fill,
             Font = Palette.Mono,
-            PlaceholderText = "Host pattern, e.g. *.curseforge.com",
+            PlaceholderText = Strings.Filters.HostPlaceholder,
         };
         _hostEntry.KeyDown += (_, e) =>
         {
@@ -99,7 +99,7 @@ public sealed class FilterPanel : UserControl
             e.SuppressKeyPress = true;
         };
 
-        var addHost = new Button { Dock = DockStyle.Right, Text = "Add", Width = 70 };
+        var addHost = new Button { Dock = DockStyle.Right, Text = Strings.Filters.AddHost, Width = 70 };
         addHost.Click += (_, _) => AddHosts();
         var addHostRow = new Panel { Dock = DockStyle.Top, Height = 36, Padding = new Padding(0, 2, 0, 2) };
         addHostRow.Controls.Add(_hostEntry);
@@ -127,7 +127,7 @@ public sealed class FilterPanel : UserControl
             e.Handled = true;
         };
 
-        var removeHost = new Button { Dock = DockStyle.Right, Text = "Remove selected", Width = 130 };
+        var removeHost = new Button { Dock = DockStyle.Right, Text = Strings.Filters.RemoveSelectedHost, Width = 130 };
         removeHost.Click += (_, _) => RemoveSelectedHost();
         var removeHostRow = new Panel { Dock = DockStyle.Bottom, Height = 36, Padding = new Padding(0, 2, 0, 2) };
         removeHostRow.Controls.Add(removeHost);
@@ -135,7 +135,7 @@ public sealed class FilterPanel : UserControl
         var hostsGroup = new GroupBox
         {
             Dock = DockStyle.Fill,
-            Text = "Hosts",
+            Text = Strings.Filters.HostsGroup,
             Padding = new Padding(8, 4, 8, 8),
             Font = Palette.UiFont,
         };
@@ -146,11 +146,11 @@ public sealed class FilterPanel : UserControl
 
         // ------------------------------------------------------ Response Status Code
 
-        _hideSuccess = NewCheck("Hide success (2xx)");
-        _hideNonSuccess = NewCheck("Hide non-2xx");
-        _hideRedirects = NewCheck("Hide redirects (300-303, 307)");
-        _hideAuthDemands = NewCheck("Hide Authentication demands (401, 407)");
-        _hideNotModified = NewCheck("Hide Not Modified (304)");
+        _hideSuccess = NewCheck(Strings.Filters.HideSuccess);
+        _hideNonSuccess = NewCheck(Strings.Filters.HideNonSuccess);
+        _hideRedirects = NewCheck(Strings.Filters.HideRedirects);
+        _hideAuthDemands = NewCheck(Strings.Filters.HideAuthDemands);
+        _hideNotModified = NewCheck(Strings.Filters.HideNotModified);
         foreach (var check in new[] { _hideSuccess, _hideNonSuccess, _hideRedirects, _hideAuthDemands, _hideNotModified })
             check.CheckedChanged += (_, _) => OnCriteriaChanged();
 
@@ -164,7 +164,7 @@ public sealed class FilterPanel : UserControl
         var statusGroup = new GroupBox
         {
             Dock = DockStyle.Top,
-            Text = "Response Status Code",
+            Text = Strings.Filters.StatusGroup,
             Height = 210,
             Padding = new Padding(8, 4, 8, 8),
             Font = Palette.UiFont,
@@ -173,14 +173,14 @@ public sealed class FilterPanel : UserControl
 
         // -------------------------------------------------------------- Actions
 
-        var actions = new ToolStripDropDownButton("Actions") { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        actions.DropDownItems.Add("Run Filterset now", null, (_, _) => RunFiltersetNow());
-        actions.DropDownItems.Add("Show all sessions", null, (_, _) => ShowAllSessions());
+        var actions = new ToolStripDropDownButton(Strings.Filters.Actions) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        actions.DropDownItems.Add(Strings.Filters.RunFiltersetNow, null, (_, _) => RunFiltersetNow());
+        actions.DropDownItems.Add(Strings.Filters.ShowAllSessions, null, (_, _) => ShowAllSessions());
         actions.DropDownItems.Add(new ToolStripSeparator());
-        actions.DropDownItems.Add("Load Filterset...", null, (_, _) => LoadFilterset());
-        actions.DropDownItems.Add("Save Filterset...", null, (_, _) => SaveFilterset());
+        actions.DropDownItems.Add(Strings.Filters.LoadFilterset, null, (_, _) => LoadFilterset());
+        actions.DropDownItems.Add(Strings.Filters.SaveFilterset, null, (_, _) => SaveFilterset());
         actions.DropDownItems.Add(new ToolStripSeparator());
-        actions.DropDownItems.Add("Help", null, (_, _) => ShowHelp());
+        actions.DropDownItems.Add(Strings.Filters.HelpMenu, null, (_, _) => ShowHelp());
 
         var actionsBar = new ToolStrip
         {
@@ -243,8 +243,8 @@ public sealed class FilterPanel : UserControl
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Load Filterset",
-            Filter = "Filterset (*.json)|*.json|All files (*.*)|*.*",
+            Title = Strings.Filters.LoadCaption,
+            Filter = Strings.Filters.FilterSetFilter,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -265,8 +265,8 @@ public sealed class FilterPanel : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not load the filterset: {ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.Filters.LoadFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -274,9 +274,9 @@ public sealed class FilterPanel : UserControl
     {
         using var dialog = new SaveFileDialog
         {
-            Title = "Save Filterset",
-            Filter = "Filterset (*.json)|*.json|All files (*.*)|*.*",
-            FileName = "Filterset.json",
+            Title = Strings.Filters.SaveCaption,
+            Filter = Strings.Filters.FilterSetFilter,
+            FileName = Strings.Filters.SaveFileName,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -286,33 +286,13 @@ public sealed class FilterPanel : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not save the filterset: {ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.Filters.SaveFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
-    private void ShowHelp() => MessageBox.Show(this,
-        "Add one or more host patterns, then use their checkboxes to choose which ones apply. "
-        + "Host and Response Status Code edits stay staged, so a partly-typed pattern is never "
-        + "applied on its own.\r\n\r\n"
-        + "The Use Filters checkbox takes effect immediately in both directions. Checking it "
-        + "runs the staged filterset straight away, exactly as Actions > Run Filterset now does; "
-        + "unchecking it stops filtering at once, as does Actions > Show all sessions, which "
-        + "leaves the filterset itself intact.\r\n\r\n"
-        + "Right-clicking a session and choosing \"Hide this host\" hides it in the capture list "
-        + "right away and adds it here, so the choice is remembered. Like the rest of the "
-        + "filterset the list applies once \"Use Filters\" is on; untick or remove the entry to "
-        + "undo it. While this list is showing only specific hosts it cannot also carry an "
-        + "exception, so a hide then lasts for the session only and the Log says so.\r\n\r\n"
-        + "Filtered-out sessions are dropped rather than hidden, so traffic captured while a "
-        + "filter is applied cannot be recovered by turning the filter off afterwards. Check "
-        + "your host and status choices before enabling the filterset.\r\n\r\n"
-        + "Filters compose into the same query grammar as the session grid's own filter box, but "
-        + "apply separately: running a filterset leaves whatever you typed there alone, and both "
-        + "narrow the list together. Editing that box does not turn the filterset off -- use the "
-        + "Use Filters checkbox for that.\r\n\r\n"
-        + "Only Hosts and Response Status Code filters are implemented.",
-        "Filters", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    private void ShowHelp() => MessageBox.Show(this, Strings.Filters.HelpBody,
+        Strings.Filters.HelpCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     /// <summary>
     /// Applies the staged filterset, or clears the applied query when Use Filters is off.

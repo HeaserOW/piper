@@ -536,6 +536,7 @@ origin.Stop();
 
 await HostFilterTests.RunAsync(runner);
 await UpdateServiceTests.RunAsync(runner);
+await UiStringTests.RunAsync(runner);
 await WebFormParserTests.RunAsync(runner);
 await TextTransformsTests.RunAsync(runner);
 await TextTransformDetectorTests.RunAsync(runner);

@@ -20,7 +20,7 @@ public sealed class ConfigurationsDialog : Form
         bool wheelZoom,
         Action trustRoot, Action removeTrustedRoot, Action exportRoot, Action openCertificateFolder)
     {
-        Text = "Configurations";
+        Text = Strings.Configurations.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         ClientSize = new Size(700, 600);
@@ -32,8 +32,8 @@ public sealed class ConfigurationsDialog : Form
         tabs.TabPages.Add(CreateGeneralPage(captureOnStartup, captureScope, wheelZoom));
         tabs.TabPages.Add(CreateHttpsPage(options, trustRoot, removeTrustedRoot, exportRoot, openCertificateFolder));
 
-        var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Size = new Size(100, 34) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
+        var save = new Button { Text = Strings.Common.Save, DialogResult = DialogResult.OK, Size = new Size(100, 34) };
+        var cancel = new Button { Text = Strings.Common.Cancel, DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
         var footer = new Panel
         {
             Dock = DockStyle.Bottom,
@@ -77,7 +77,7 @@ public sealed class ConfigurationsDialog : Form
 
     private TabPage CreateGeneralPage(bool captureOnStartup, string captureScope, bool wheelZoom)
     {
-        var page = new TabPage("General");
+        var page = new TabPage(Strings.Configurations.GeneralTab);
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
@@ -91,7 +91,7 @@ public sealed class ConfigurationsDialog : Form
 
         var explanation = new Label
         {
-            Text = "These settings are saved for future Piper sessions.",
+            Text = Strings.Configurations.SavedForFutureSessions,
             AutoSize = true,
             ForeColor = Palette.TextDim,
             Margin = new Padding(0, 0, 0, 14),
@@ -101,7 +101,7 @@ public sealed class ConfigurationsDialog : Form
 
         _captureOnStartup = new CheckBox
         {
-            Text = "Start capturing when Piper opens",
+            Text = Strings.Configurations.CaptureOnStartup,
             Checked = captureOnStartup,
             AutoSize = true,
             Margin = new Padding(0, 0, 0, 12),
@@ -109,7 +109,7 @@ public sealed class ConfigurationsDialog : Form
         panel.Controls.Add(_captureOnStartup, 0, 1);
         panel.SetColumnSpan(_captureOnStartup, 2);
 
-        var scopeLabel = new Label { Text = "Capture scope:", AutoSize = true, Anchor = AnchorStyles.Left };
+        var scopeLabel = new Label { Text = Strings.Configurations.CaptureScopeLabel, AutoSize = true, Anchor = AnchorStyles.Left };
         _captureScope = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -117,10 +117,10 @@ public sealed class ConfigurationsDialog : Form
             Anchor = AnchorStyles.Left,
         };
         _captureScope.Items.AddRange([
-            new CaptureScopeChoice("AllProcesses", "All processes"),
-            new CaptureScopeChoice("WebBrowsers", "Web browsers"),
-            new CaptureScopeChoice("NonBrowsers", "Non-browsers"),
-            new CaptureScopeChoice("HideAll", "Hide all"),
+            new CaptureScopeChoice("AllProcesses", Strings.Configurations.ScopeAllProcesses),
+            new CaptureScopeChoice("WebBrowsers", Strings.Configurations.ScopeWebBrowsers),
+            new CaptureScopeChoice("NonBrowsers", Strings.Configurations.ScopeNonBrowsers),
+            new CaptureScopeChoice("HideAll", Strings.Configurations.ScopeHideAll),
         ]);
         _captureScope.SelectedItem = _captureScope.Items.Cast<CaptureScopeChoice>()
             .FirstOrDefault(item => item.Value == captureScope) ?? _captureScope.Items[0];
@@ -129,7 +129,7 @@ public sealed class ConfigurationsDialog : Form
 
         var note = new Label
         {
-            Text = "Capture scope controls which sessions are collected and shown.",
+            Text = Strings.Configurations.CaptureScopeNote,
             AutoSize = true,
             ForeColor = Palette.TextDim,
             Margin = new Padding(0, 10, 0, 0),
@@ -139,7 +139,7 @@ public sealed class ConfigurationsDialog : Form
 
         _wheelZoom = new CheckBox
         {
-            Text = "Resize the UI with Ctrl+MouseWheel",
+            Text = Strings.Configurations.WheelZoom,
             Checked = wheelZoom,
             AutoSize = true,
             Margin = new Padding(0, 18, 0, 0),
@@ -149,8 +149,7 @@ public sealed class ConfigurationsDialog : Form
 
         var zoomNote = new Label
         {
-            Text = "View > Zoom and Ctrl+plus / Ctrl+minus / Ctrl+0 keep working either way, so"
-                 + " turning this off only stops the size changing while you scroll.",
+            Text = Strings.Configurations.WheelZoomNote,
             AutoSize = true,
             ForeColor = Palette.TextDim,
             Margin = new Padding(22, 2, 0, 0),
@@ -165,7 +164,7 @@ public sealed class ConfigurationsDialog : Form
     private TabPage CreateHttpsPage(ProxyOptions options, Action trustRoot, Action removeTrustedRoot,
         Action exportRoot, Action openCertificateFolder)
     {
-        var page = new TabPage("HTTPS");
+        var page = new TabPage(Strings.Configurations.HttpsTab);
         var panel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -175,32 +174,31 @@ public sealed class ConfigurationsDialog : Form
             Padding = new Padding(16),
         };
 
-        _decryptHttps = AddOption(panel, "Decrypt HTTPS traffic", options.DecryptHttps,
-            "Requires the Piper root certificate to be trusted.");
-        _http2Downstream = AddOption(panel, "Negotiate HTTP/2 with browsers", options.EnableHttp2Downstream,
-            "Applies to new decrypted browser connections.");
-        _http2Upstream = AddOption(panel, "Negotiate HTTP/2 with origin servers", options.EnableHttp2Upstream,
-            "Applies to new origin connections.");
-        _http3Upstream = AddOption(panel, "Attempt HTTP/3 with origin servers (QUIC)", options.EnableHttp3Upstream,
-            "Origins are tried over QUIC only after advertising HTTP/3 through Alt-Svc.");
-        _validateUpstreamCertificates = AddOption(panel, "Verify origin server certificates",
+        _decryptHttps = AddOption(panel, Strings.Configurations.DecryptHttps, options.DecryptHttps,
+            Strings.Configurations.DecryptHttpsNote);
+        _http2Downstream = AddOption(panel, Strings.Configurations.Http2Downstream, options.EnableHttp2Downstream,
+            Strings.Configurations.Http2DownstreamNote);
+        _http2Upstream = AddOption(panel, Strings.Configurations.Http2Upstream, options.EnableHttp2Upstream,
+            Strings.Configurations.Http2UpstreamNote);
+        _http3Upstream = AddOption(panel, Strings.Configurations.Http3Upstream, options.EnableHttp3Upstream,
+            Strings.Configurations.Http3UpstreamNote);
+        _validateUpstreamCertificates = AddOption(panel, Strings.Configurations.ValidateUpstream,
             options.ValidateUpstreamCertificates,
-            "Off accepts any origin certificate (self-signed, expired, hostname mismatch) -- only for "
-            + "testing a known origin. It also hides a real attacker impersonating that origin.",
+            Strings.Configurations.ValidateUpstreamNote,
             Palette.StatusServerError, descriptionMaxWidth: 560);
 
         var certificates = new GroupBox
         {
-            Text = "Piper root certificate",
+            Text = Strings.Configurations.CertificatesGroup,
             Width = 590,
             Height = 118,
             Margin = new Padding(0, 14, 0, 0),
         };
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(8) };
-        actions.Controls.Add(new Button { Text = "Trust root certificate...", AutoSize = true });
-        actions.Controls.Add(new Button { Text = "Remove trusted root", AutoSize = true });
-        actions.Controls.Add(new Button { Text = "Export root certificate...", AutoSize = true });
-        actions.Controls.Add(new Button { Text = "Open certificate folder", AutoSize = true });
+        actions.Controls.Add(new Button { Text = Strings.Configurations.TrustRoot, AutoSize = true });
+        actions.Controls.Add(new Button { Text = Strings.Configurations.RemoveTrustedRoot, AutoSize = true });
+        actions.Controls.Add(new Button { Text = Strings.Configurations.ExportRoot, AutoSize = true });
+        actions.Controls.Add(new Button { Text = Strings.Configurations.OpenCertificateFolder, AutoSize = true });
         actions.Controls[0].Click += (_, _) => trustRoot();
         actions.Controls[1].Click += (_, _) => removeTrustedRoot();
         actions.Controls[2].Click += (_, _) => exportRoot();

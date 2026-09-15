@@ -8,8 +8,8 @@ namespace Piper.App.Controls;
 /// <summary>Request above, response below, for the currently selected session.</summary>
 public sealed class InspectorPanel : UserControl
 {
-    private readonly MessageInspector _request = new("Request", showWebForms: true) { Dock = DockStyle.Fill };
-    private readonly MessageInspector _response = new("Response", showImageViewer: true) { Dock = DockStyle.Fill };
+    private readonly MessageInspector _request = new(Strings.Inspector.Request, showWebForms: true) { Dock = DockStyle.Fill };
+    private readonly MessageInspector _response = new(Strings.Inspector.Response, showImageViewer: true) { Dock = DockStyle.Fill };
 
     /// <summary>Raised when the selected session's timing/transfer summary changes.</summary>
     public event EventHandler? TimingChanged;
@@ -50,26 +50,26 @@ public sealed class InspectorPanel : UserControl
     {
         if (session is null)
         {
-            _request.SetMessage(null, "Request");
-            _response.SetMessage(null, "Response");
+            _request.SetMessage(null, Strings.Inspector.Request);
+            _response.SetMessage(null, Strings.Inspector.Response);
             SetTimingText(string.Empty);
             return;
         }
 
         _request.SetMessage(session.Request,
-            session.Request is null ? "Request" : $"Request   {session.Request.StartLine}");
+            session.Request is null ? Strings.Inspector.Request : Strings.Inspector.RequestSummary(session.Request.StartLine));
 
         if (session.Response is not null)
         {
-            _response.SetMessage(session.Response, $"Response   {session.Response.StartLine}");
+            _response.SetMessage(session.Response, Strings.Inspector.ResponseSummary(session.Response.StartLine));
         }
         else
         {
             _response.SetMessage(null, session.State switch
             {
-                SessionState.Failed => $"Response   FAILED - {session.Error}{CertificateFailureHint.For(session.Error)}",
-                SessionState.Tunnel => "Response   (encrypted tunnel - not decrypted)",
-                _ => "Response   (waiting)",
+                SessionState.Failed => Strings.Inspector.ResponseFailed(session.Error, CertificateFailureHint.For(session.Error)),
+                SessionState.Tunnel => Strings.Inspector.ResponseTunnel,
+                _ => Strings.Inspector.ResponseWaiting,
             });
         }
 
@@ -105,8 +105,8 @@ public sealed class InspectorPanel : UserControl
 
     private static string FormatBytes(long bytes) => bytes switch
     {
-        < 1024 => $"{bytes} B",
-        < 1024 * 1024 => $"{bytes / 1024.0:N1} KB",
-        _ => $"{bytes / (1024.0 * 1024):N2} MB",
+        < 1024 => Strings.Units.Bytes(bytes),
+        < 1024 * 1024 => Strings.Units.Kilobytes(bytes / 1024.0),
+        _ => Strings.Units.Megabytes(bytes / (1024.0 * 1024)),
     };
 }

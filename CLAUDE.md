@@ -36,6 +36,13 @@ out the trusted base branch and gives Claude read/comment-only tools.
 
 - Keep protocol, proxy, certificate, and session logic in `Piper.Core`; keep WinForms concerns in
   `Piper.App`.
+- Keep every user-visible string in `src/Piper.App/Locales/en.json`, which is an i18next-format
+  catalogue, and reach it through the typed accessors in `Strings.cs` rather than calling `I18n.T`
+  with a key at the call site. Use `{{value}}` interpolation, `{{value, N0}}` formatting and
+  `key_one`/`key_other` plurals instead of composing sentences in C#. Build menu items that show an
+  accelerator with `Menus.Item`, never by embedding a tab in their text. Wire constants that only
+  look like text — header names, MIME types, file extensions, registry values — stay where they are
+  used.
 - Keep HTTP/1.1, HTTP/2, and HTTP/3 translations semantically equivalent. Preserve header ordering
   and duplicates where the wire format permits them, and reject ambiguous framing.
 - Never make certificate installation, system-proxy changes, decryption, or trust-store mutation

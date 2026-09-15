@@ -37,7 +37,7 @@ public sealed class ComposerPanel : UserControl
     private readonly Label _status;
     // The same inspector the capture grid uses, so a composed response is read with exactly the
     // tooling - pretty-printed JSON, hex, image preview - that a captured one gets.
-    private readonly MessageInspector _response = new("Response", showImageViewer: true) { Dock = DockStyle.Fill };
+    private readonly MessageInspector _response = new(Strings.Inspector.Response, showImageViewer: true) { Dock = DockStyle.Fill };
     // Persisted Composer history belongs in this panel, not in SessionStore. The latter drives
     // the capture list, so restoring history there made an old composed request appear as the
     // first "captured" session every time Piper started.
@@ -74,7 +74,7 @@ public sealed class ComposerPanel : UserControl
         {
             Dock = DockStyle.Fill,
             Font = Palette.Mono,
-            PlaceholderText = "https://example.com/api/v1/resource",
+            PlaceholderText = Strings.Composer.UrlPlaceholder,
         };
         _url.KeyDown += (_, e) =>
         {
@@ -83,7 +83,7 @@ public sealed class ComposerPanel : UserControl
             _ = ExecuteAsync();
         };
 
-        _execute = new Button { Width = 90, Dock = DockStyle.Right, Text = "Send" };
+        _execute = new Button { Width = 90, Dock = DockStyle.Right, Text = Strings.Composer.Send };
         _execute.Click += (_, _) => _ = ExecuteAsync();
 
         var urlRow = new Panel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(2) };
@@ -95,14 +95,14 @@ public sealed class ComposerPanel : UserControl
         methodRow.Controls.Add(urlRow);
         methodRow.Controls.Add(_method);
 
-        _headers = MakeEditor("Host: example.com\r\nAccept: application/json");
+        _headers = MakeEditor(Strings.Composer.DefaultHeaders);
         _body = MakeEditor(string.Empty);
         _body.TextChanged += (_, _) => UpdateBodyWarning();
         _rawEditor = MakeEditor(string.Empty);
 
         _editorTabs = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
-        _editorTabs.TabPages.Add(NewPage("Headers", _headers));
-        _editorTabs.TabPages.Add(NewPage("Raw", _rawEditor)); // == RawTabIndex
+        _editorTabs.TabPages.Add(NewPage(Strings.Composer.TabHeaders, _headers));
+        _editorTabs.TabPages.Add(NewPage(Strings.Composer.TabRaw, _rawEditor)); // == RawTabIndex
         _editorTabs.Selecting += OnEditorTabSelecting;
         _editorTabs.Deselecting += OnEditorTabDeselecting;
 
@@ -119,7 +119,7 @@ public sealed class ComposerPanel : UserControl
         {
             Dock = DockStyle.Top,
             Height = 22,
-            Text = "  Body",
+            Text = Strings.Composer.BodyHeader,
             ForeColor = Palette.Text,
             Font = Palette.UiFontBold,
             Padding = new Padding(0, 4, 0, 0),
@@ -365,8 +365,8 @@ public sealed class ComposerPanel : UserControl
         _rawEditor.Text = BuildRawText();
         // History is persisted as raw request text only, so a loaded entry has no response of its
         // own. Leaving the previous send's body on screen beside it would read as this request's.
-        ShowResponse(null, "Response   (not sent yet)");
-        _status.Text = $"Loaded #{session.Id} - edit and press Send (or Enter in the URL box).";
+        ShowResponse(null, Strings.Composer.ResponseNotSent);
+        _status.Text = Strings.Composer.LoadedSession(session.Id);
         // Raw shows the request line, headers and body at once, which is what you want when
         // reviewing something already sent -- and it is what every caller here loads a session for.
         _editorTabs.SelectedIndex = RawTabIndex;
@@ -411,14 +411,14 @@ public sealed class ComposerPanel : UserControl
         var url = _url.Text.Trim();
         if (url.Length == 0)
         {
-            error = "Enter a URL.";
+            error = Strings.Composer.EnterUrl;
             return false;
         }
 
         if (!url.Contains("://", StringComparison.Ordinal)) url = "https://" + url;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))
         {
-            error = $"'{url}' is not a valid absolute URL.";
+            error = Strings.Composer.InvalidUrl(url);
             return false;
         }
 
@@ -490,9 +490,9 @@ public sealed class ComposerPanel : UserControl
         }
 
         _inFlight = new CancellationTokenSource();
-        _execute.Text = "Cancel";
+        _execute.Text = Strings.Composer.CancelSend;
         _status.ForeColor = Palette.TextDim;
-        _status.Text = "Sending...";
+        _status.Text = Strings.Composer.Sending;
 
         try
         {
@@ -508,34 +508,36 @@ public sealed class ComposerPanel : UserControl
 
             if (session.State == SessionState.Failed)
             {
-                _status.Text = $"Failed: {session.Error}{CertificateFailureHint.For(session.Error)}";
+                _status.Text = Strings.Composer.Failed(session.Error, CertificateFailureHint.For(session.Error));
                 _status.ForeColor = Palette.StatusServerError;
-                Surface(null, $"Response   FAILED - {session.Error}{CertificateFailureHint.For(session.Error)}");
+                Surface(null, Strings.Composer.FailedSummary(session.Error, CertificateFailureHint.For(session.Error)));
             }
             else
             {
                 _status.ForeColor = Palette.ForStatus(session.StatusCode, false, false, false);
-                _status.Text = $"#{session.Id}  {session.StatusCode}  {session.Duration.TotalMilliseconds:N0} ms  {Format.Size(session.ResponseSize)}";
+                _status.Text = Strings.Composer.Result(session.Id, session.StatusCode,
+                    session.Duration.TotalMilliseconds, Format.Size(session.ResponseSize));
                 Surface(session.Response,
-                    $"Response   {session.Response?.StartLine}   {session.Duration.TotalMilliseconds:N0} ms   {Format.Size(session.ResponseSize)}");
+                    Strings.Composer.ResultSummary(session.Response?.StartLine,
+                        session.Duration.TotalMilliseconds, Format.Size(session.ResponseSize)));
             }
         }
         catch (OperationCanceledException)
         {
-            _status.Text = "Cancelled.";
-            Surface(null, "Response   (cancelled)");
+            _status.Text = Strings.Composer.Cancelled;
+            Surface(null, Strings.Composer.ResponseCancelled);
         }
         catch (Exception ex)
         {
-            _status.Text = $"Error: {ex.Message}";
+            _status.Text = Strings.Composer.Error(ex.Message);
             _status.ForeColor = Palette.StatusServerError;
-            Surface(null, $"Response   ERROR - {ex.Message}");
+            Surface(null, Strings.Composer.ErrorSummary(ex.Message));
         }
         finally
         {
             _inFlight?.Dispose();
             _inFlight = null;
-            _execute.Text = "Send";
+            _execute.Text = Strings.Composer.Send;
         }
     }
 

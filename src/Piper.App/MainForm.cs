@@ -71,7 +71,7 @@ public sealed class MainForm : Form, IMessageFilter
         Palette.RescaleFonts();
 
         DoubleBuffered = true;
-        Text = "Piper";
+        Text = Strings.App.Name;
         Width = 1500;
         Height = 950;
         StartPosition = FormStartPosition.CenterScreen;
@@ -122,14 +122,14 @@ public sealed class MainForm : Form, IMessageFilter
         };
 
         _rightTabs = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
-        var inspectorsPage = NewPage("Inspectors", _inspector);
+        var inspectorsPage = NewPage(Strings.Tabs.Inspectors, _inspector);
         _rightTabs.TabPages.Add(inspectorsPage);
-        _rightTabs.TabPages.Add(NewPage("Composer", _composer));
-        var filtersPage = NewPage("Filters", _filterPanel);
+        _rightTabs.TabPages.Add(NewPage(Strings.Tabs.Composer, _composer));
+        var filtersPage = NewPage(Strings.Tabs.Filters, _filterPanel);
         _rightTabs.TabPages.Add(filtersPage);
-        _autoResponderPage = NewPage("AutoResponder", _autoResponder);
+        _autoResponderPage = NewPage(Strings.Tabs.AutoResponder, _autoResponder);
         _rightTabs.TabPages.Add(_autoResponderPage);
-        _rightTabs.TabPages.Add(NewPage("Log", _logView));
+        _rightTabs.TabPages.Add(NewPage(Strings.Tabs.Log, _logView));
 
         var split = new SplitContainer
         {
@@ -212,7 +212,7 @@ public sealed class MainForm : Form, IMessageFilter
             _options.AutoResponder.Apply(settings);
             AutoResponderSettingsStore.Save(settings);
             _rightTabs.SetTabChecked(_autoResponderPage, settings.Enabled && settings.Rules.Count > 0);
-            foreach (var warning in _options.AutoResponder.Warnings) AppendLog($"AutoResponder: {warning}");
+            foreach (var warning in _options.AutoResponder.Warnings) AppendLog(Strings.Log.AutoResponderWarning(warning));
         };
 
         if (AutoResponderSettingsStore.Load() is { } autoResponderSettings)
@@ -240,15 +240,14 @@ public sealed class MainForm : Form, IMessageFilter
 
         Palette.Apply(this);
         UpdateZoomStatus();
-        AppendLog($"Root CA: {_ca.RootPfxPath}");
+        AppendLog(Strings.Log.RootCaPath(_ca.RootPfxPath));
         AppendLog(TrustStore.IsTrusted(_ca.RootCertificate)
-            ? "Root CA is trusted by the current user. HTTPS decryption will work."
-            : "Root CA is NOT trusted. HTTPS sites will fail until you use Tools > Configurations > HTTPS.");
+            ? Strings.Log.RootCaTrusted
+            : Strings.Log.RootCaNotTrusted);
         // The toggle persists across restarts, so say so on every start rather than leaving a
         // disabled origin-certificate check to be remembered.
         if (!_options.ValidateUpstreamCertificates)
-            AppendLog("Origin server certificate verification is OFF (Configurations > HTTPS). Piper cannot "
-                + "tell a real origin from something impersonating it.");
+            AppendLog(Strings.Log.UpstreamValidationOffAtStartup);
 
         // Capture starts in OnShown, not here: anything that blocks in the constructor -
         // a dialog in particular - runs before Application.Run shows the window, and the
@@ -273,7 +272,7 @@ public sealed class MainForm : Form, IMessageFilter
         // machine pointed at a Piper that is no longer listening, which the user sees as having
         // lost their connection. Undo it before anything else touches the settings.
         if (SystemProxy.RestoreLeftovers() is { } leftover)
-            AppendLog($"Restored the system proxy that a previous session left pointing at {leftover}.");
+            AppendLog(Strings.Log.RestoredLeftoverProxy(leftover));
 
         if (!EnsureTrustedRootForStartup())
         {
@@ -312,24 +311,20 @@ public sealed class MainForm : Form, IMessageFilter
         if (TrustStore.IsTrusted(_ca.RootCertificate)) return true;
 
         var answer = MessageBox.Show(this,
-            "Piper's HTTPS inspection certificate is not trusted by Windows.\r\n\r\n"
-            + "Click OK to install Piper's root certificate for this Windows user and restart Piper. "
-            + "HTTPS capture will then work immediately.\r\n\r\n"
-            + "This is a security-sensitive change: anything with access to Piper's private key "
-            + "can impersonate HTTPS sites to this Windows account. Only continue on a machine you control.",
-            "Trust Piper certificate",
+            Strings.Certificates.StartupTrustBody,
+            Strings.Certificates.StartupTrustCaption,
             MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
 
         if (answer != DialogResult.OK)
         {
-            AppendLog("Root certificate is not trusted; startup capture remains off.");
+            AppendLog(Strings.Log.StartupCaptureOff);
             return false;
         }
 
         try
         {
             TrustStore.Install(_ca.RootCertificate);
-            AppendLog($"Root certificate {_ca.RootCertificate.Thumbprint} added to the current user's trusted roots.");
+            AppendLog(Strings.Log.RootTrusted(_ca.RootCertificate.Thumbprint));
             _closeAfterShutdown = true;
             Application.Restart();
             Close();
@@ -337,10 +332,10 @@ public sealed class MainForm : Form, IMessageFilter
         }
         catch (Exception ex)
         {
-            AppendLog($"Could not trust the root certificate: {ex.Message}");
+            AppendLog(Strings.Log.TrustRootFailed(ex.Message));
             MessageBox.Show(this,
-                $"Piper could not install its root certificate, so capture has not started.\r\n\r\n{ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Strings.Certificates.StartupInstallFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
     }
@@ -437,53 +432,50 @@ public sealed class MainForm : Form, IMessageFilter
     {
         var menu = new MenuStrip { Font = Palette.UiFont };
 
-        var file = new ToolStripMenuItem("&File");
-        var openSaz = new ToolStripMenuItem("&Open SAZ capture...", null, (_, _) => OpenSazCapture())
+        var file = new ToolStripMenuItem(Strings.Menu.File);
+        var openSaz = new ToolStripMenuItem(Strings.Menu.OpenSaz, null, (_, _) => OpenSazCapture())
         {
             ShortcutKeys = Keys.Control | Keys.O,
         };
         file.DropDownItems.Add(openSaz);
-        var saveSaz = new ToolStripMenuItem("&Save selected sessions as SAZ...", null,
+        var saveSaz = new ToolStripMenuItem(Strings.Menu.SaveSaz, null,
             (_, _) => _sessionList.SaveSelectedSessionsAsSaz())
         {
             ShortcutKeys = Keys.Control | Keys.S,
         };
         file.DropDownItems.Add(saveSaz);
         file.DropDownItems.Add(new ToolStripSeparator());
-        file.DropDownItems.Add("&Clear sessions\tCtrl+X", null, (_, _) => _store.Clear());
+        file.DropDownItems.Add(Menus.Item(Strings.Menu.ClearSessions, Strings.Shortcuts.CtrlX, (_, _) => _store.Clear()));
         file.DropDownItems.Add(new ToolStripSeparator());
-        file.DropDownItems.Add("E&xit", null, (_, _) => Close());
+        file.DropDownItems.Add(Strings.Menu.Exit, null, (_, _) => Close());
         file.DropDownOpening += (_, _) =>
             saveSaz.Enabled = _sessionList.SelectedSessions.Any(session => session.Request is not null);
 
-        var tools = new ToolStripMenuItem("&Tools");
-        tools.DropDownItems.Add("&Configurations...", null, (_, _) => ShowConfigurations());
-        var hosts = new ToolStripMenuItem("&Hosts...", null, (_, _) => ShowHosts());
+        var tools = new ToolStripMenuItem(Strings.Menu.Tools);
+        tools.DropDownItems.Add(Strings.Menu.Configurations, null, (_, _) => ShowConfigurations());
+        var hosts = new ToolStripMenuItem(Strings.Menu.Hosts, null, (_, _) => ShowHosts());
         tools.DropDownItems.Add(hosts);
         tools.DropDownItems.Add(new ToolStripSeparator());
         // Fiddler puts TextWizard on Ctrl+E; that is already send-to-Composer here, so Ctrl+T it is.
         // Ctrl+F is deliberately not a menu shortcut: a menu accelerator fires before the focused
         // control sees the key, and the Composer and inspector searches own Ctrl+F for themselves.
-        tools.DropDownItems.Add(new ToolStripMenuItem("&Find sessions...", null,
-            (_, _) => _sessionList.ShowFindSessions())
-        {
-            ShortcutKeyDisplayString = "Ctrl+F",
-        });
-        tools.DropDownItems.Add(new ToolStripMenuItem("&TextWizard...", null, (_, _) => TextWizardDialog.Open(this))
+        tools.DropDownItems.Add(Menus.Item(Strings.Menu.FindSessions, Strings.Shortcuts.CtrlF,
+            (_, _) => _sessionList.ShowFindSessions()));
+        tools.DropDownItems.Add(new ToolStripMenuItem(Strings.Menu.TextWizard, null, (_, _) => TextWizardDialog.Open(this))
         {
             ShortcutKeys = Keys.Control | Keys.T,
         });
         tools.DropDownOpening += (_, _) => hosts.Checked = _options.HostRemapping.Enabled;
 
-        var help = new ToolStripMenuItem("&Help");
-        help.DropDownItems.Add("&Search syntax", null, (_, _) => ShowSearchHelp());
-        _checkForUpdatesMenuItem = new ToolStripMenuItem("Check for &updates...", null,
+        var help = new ToolStripMenuItem(Strings.Menu.Help);
+        help.DropDownItems.Add(Strings.Menu.SearchSyntax, null, (_, _) => ShowSearchHelp());
+        _checkForUpdatesMenuItem = new ToolStripMenuItem(Strings.Menu.CheckForUpdates, null,
             async (_, _) => await CheckForUpdatesAsync(manual: true));
         help.DropDownItems.Add(_checkForUpdatesMenuItem);
         help.DropDownItems.Add(new ToolStripSeparator());
-        help.DropDownItems.Add("&About", null, (_, _) => MessageBox.Show(this,
-            "Piper\r\n\r\nAn HTTP(S) debugging proxy written from scratch on .NET 10.",
-            "About Piper", MessageBoxButtons.OK, MessageBoxIcon.Information));
+        help.DropDownItems.Add(Strings.Menu.About, null, (_, _) => MessageBox.Show(this,
+            Strings.App.AboutBody,
+            Strings.App.AboutCaption, MessageBoxButtons.OK, MessageBoxIcon.Information));
 
         menu.Items.AddRange([file, BuildRulesMenu(), BuildViewMenu(), tools, help]);
         return menu;
@@ -496,10 +488,10 @@ public sealed class MainForm : Form, IMessageFilter
     /// </summary>
     private ToolStripMenuItem BuildViewMenu()
     {
-        var view = new ToolStripMenuItem("&View");
-        _zoomInItem = NewZoomItem("Zoom &in", Keys.Control | Keys.Oemplus, "Ctrl++", FontScale.ZoomIn);
-        _zoomOutItem = NewZoomItem("Zoom &out", Keys.Control | Keys.OemMinus, "Ctrl+-", FontScale.ZoomOut);
-        _zoomResetItem = NewZoomItem("&Reset zoom", Keys.Control | Keys.D0, "Ctrl+0", FontScale.Reset);
+        var view = new ToolStripMenuItem(Strings.Menu.View);
+        _zoomInItem = NewZoomItem(Strings.Menu.ZoomIn, Keys.Control | Keys.Oemplus, Strings.Shortcuts.ZoomIn, FontScale.ZoomIn);
+        _zoomOutItem = NewZoomItem(Strings.Menu.ZoomOut, Keys.Control | Keys.OemMinus, Strings.Shortcuts.ZoomOut, FontScale.ZoomOut);
+        _zoomResetItem = NewZoomItem(Strings.Menu.ResetZoom, Keys.Control | Keys.D0, Strings.Shortcuts.ZoomReset, FontScale.Reset);
         view.DropDownItems.AddRange([_zoomInItem, _zoomOutItem, new ToolStripSeparator(), _zoomResetItem]);
         UpdateZoomMenu();
         return view;
@@ -519,12 +511,12 @@ public sealed class MainForm : Form, IMessageFilter
 
     private ToolStripMenuItem BuildRulesMenu()
     {
-        var rules = new ToolStripMenuItem("&Rules");
+        var rules = new ToolStripMenuItem(Strings.Menu.Rules);
         rules.DropDownOpening += (_, _) =>
         {
             rules.DropDownItems.Clear();
-            var userAgent = new ToolStripMenuItem("&User-Agent");
-            userAgent.DropDownItems.Add(CreateUserAgentChoice("No override", null));
+            var userAgent = new ToolStripMenuItem(Strings.Menu.UserAgent);
+            userAgent.DropDownItems.Add(CreateUserAgentChoice(Strings.Menu.UserAgentNoOverride, null));
             userAgent.DropDownItems.Add(new ToolStripSeparator());
             foreach (var preset in UserAgentPresets)
                 userAgent.DropDownItems.Add(CreateUserAgentChoice(preset.Name, preset.Value));
@@ -534,7 +526,7 @@ public sealed class MainForm : Form, IMessageFilter
             rules.DropDownItems.Add(new ToolStripSeparator());
 
             var settings = _autoResponder.Settings;
-            var automatic = new ToolStripMenuItem("Enable &automatic responses")
+            var automatic = new ToolStripMenuItem(Strings.Menu.EnableAutomaticResponses)
             {
                 Checked = settings.Enabled,
                 CheckOnClick = true,
@@ -542,7 +534,7 @@ public sealed class MainForm : Form, IMessageFilter
             automatic.Click += (_, _) => _autoResponder.SetEnabled(automatic.Checked);
             rules.DropDownItems.Add(automatic);
 
-            var passthrough = new ToolStripMenuItem("&Unmatched requests pass through")
+            var passthrough = new ToolStripMenuItem(Strings.Menu.UnmatchedRequestsPassThrough)
             {
                 Checked = settings.PassthroughUnmatched,
                 CheckOnClick = true,
@@ -550,7 +542,7 @@ public sealed class MainForm : Form, IMessageFilter
             passthrough.Click += (_, _) => _autoResponder.SetPassthroughUnmatched(passthrough.Checked);
             rules.DropDownItems.Add(passthrough);
 
-            rules.DropDownItems.Add("A&utoResponder rules...", null, (_, _) => _rightTabs.SelectedTab = _autoResponderPage);
+            rules.DropDownItems.Add(Strings.Menu.AutoResponderRules, null, (_, _) => _rightTabs.SelectedTab = _autoResponderPage);
         };
         return rules;
     }
@@ -569,7 +561,7 @@ public sealed class MainForm : Form, IMessageFilter
     {
         var isPreset = _options.GlobalUserAgent is null
             || UserAgentPresets.Any(preset => string.Equals(preset.Value, _options.GlobalUserAgent, StringComparison.Ordinal));
-        var choice = new ToolStripMenuItem("Custom...") { Checked = !isPreset };
+        var choice = new ToolStripMenuItem(Strings.Menu.UserAgentCustom) { Checked = !isPreset };
         choice.Click += (_, _) => SetCustomUserAgent();
         return choice;
     }
@@ -578,14 +570,14 @@ public sealed class MainForm : Form, IMessageFilter
     {
         _options.GlobalUserAgent = value;
         ProxyConfigurationSettingsStore.Save(ProxyConfigurationSettings.From(_options));
-        AppendLog(value is null ? "Global User-Agent override cleared." : $"Global User-Agent rule set to {name}.");
+        AppendLog(value is null ? Strings.Log.GlobalUserAgentCleared : Strings.Log.GlobalUserAgentSet(name));
     }
 
     private void SetCustomUserAgent()
     {
         using var prompt = new Form
         {
-            Text = "Custom User-Agent",
+            Text = Strings.UserAgents.PromptCaption,
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             ClientSize = new Size(640, 180),
@@ -594,10 +586,10 @@ public sealed class MainForm : Form, IMessageFilter
             ShowInTaskbar = false,
         };
         Palette.ScaleDialogSize(prompt);
-        var label = new Label { Dock = DockStyle.Top, Height = 38, Text = "Use this User-Agent for all proxied requests:", Padding = new Padding(14, 12, 0, 0) };
+        var label = new Label { Dock = DockStyle.Top, Height = 38, Text = Strings.UserAgents.PromptLabel, Padding = new Padding(14, 12, 0, 0) };
         var value = new TextBox { Dock = DockStyle.Top, Height = 30, Text = _options.GlobalUserAgent ?? string.Empty, Margin = new Padding(12), Font = Palette.Mono };
-        var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Size = new Size(100, 34) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
+        var save = new Button { Text = Strings.Common.Save, DialogResult = DialogResult.OK, Size = new Size(100, 34) };
+        var cancel = new Button { Text = Strings.Common.Cancel, DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 68, Padding = new Padding(12, 12, 12, 10) };
         footer.Paint += (_, e) =>
         {
@@ -616,7 +608,7 @@ public sealed class MainForm : Form, IMessageFilter
         Palette.Apply(prompt);
 
         if (prompt.ShowDialog(this) != DialogResult.OK) return;
-        SetGlobalUserAgent(string.IsNullOrWhiteSpace(value.Text) ? null : value.Text.Trim(), "Custom");
+        SetGlobalUserAgent(string.IsNullOrWhiteSpace(value.Text) ? null : value.Text.Trim(), Strings.UserAgents.CustomName);
     }
 
     private void ShowConfigurations()
@@ -638,10 +630,9 @@ public sealed class MainForm : Form, IMessageFilter
         ProxyConfigurationSettingsStore.Save(ProxyConfigurationSettings.From(_options));
         FontScale.WheelEnabled = dialog.WheelZoom;
         SaveFontScaleSettings();
-        AppendLog("Configurations saved. HTTPS protocol changes apply to new connections.");
+        AppendLog(Strings.Log.ConfigurationsSaved);
         if (!_options.ValidateUpstreamCertificates)
-            AppendLog("Origin server certificate verification is OFF. Piper cannot tell a real origin from "
-                + "something impersonating it. Turn it back on when you are done testing.");
+            AppendLog(Strings.Log.UpstreamValidationOffAfterSave);
     }
 
     private void ShowHosts()
@@ -652,8 +643,8 @@ public sealed class MainForm : Form, IMessageFilter
         _options.HostRemapping.Apply(dialog.Settings);
         ProxyConfigurationSettingsStore.Save(ProxyConfigurationSettings.From(_options));
         AppendLog(_options.HostRemapping.Enabled
-            ? "Host remapping enabled. New origin connections will use the configured mappings."
-            : "Host remapping disabled.");
+            ? Strings.Log.HostRemappingEnabled
+            : Strings.Log.HostRemappingDisabled);
     }
 
     private void OpenCertificateFolder()
@@ -665,19 +656,19 @@ public sealed class MainForm : Form, IMessageFilter
 
     private static readonly (string Name, string Value)[] UserAgentPresets =
     [
-        ("Chrome (Windows)", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
-        ("Microsoft Edge (Windows)", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"),
-        ("Firefox (Windows)", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"),
-        ("Chrome (Android)", "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"),
-        ("Safari (iPhone)", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"),
+        (Strings.UserAgents.ChromeWindows, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
+        (Strings.UserAgents.EdgeWindows, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"),
+        (Strings.UserAgents.FirefoxWindows, "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"),
+        (Strings.UserAgents.ChromeAndroid, "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"),
+        (Strings.UserAgents.SafariIPhone, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"),
     ];
 
     private void OpenSazCapture()
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Open Fiddler SAZ capture",
-            Filter = "Fiddler capture archives (*.saz;*.raz)|*.saz;*.raz|All files (*.*)|*.*",
+            Title = Strings.SazImport.OpenCaption,
+            Filter = Strings.SazImport.OpenFilter,
             Multiselect = true,
         };
         if (dialog.ShowDialog(this) == DialogResult.OK) ImportSazFiles(dialog.FileNames);
@@ -710,10 +701,9 @@ public sealed class MainForm : Form, IMessageFilter
                 foreach (var session in result.Sessions) _store.Add(session);
             }
 
-            AppendLog($"Imported {result.Sessions.Count:N0} session(s) from {Path.GetFileName(path)}" +
-                (isComposerImport ? " into Composer History." : "."));
+            AppendLog(Strings.Log.ImportedSessions(result.Sessions.Count, Path.GetFileName(path), isComposerImport));
             foreach (var warning in result.Warnings)
-                AppendLog($"SAZ import warning ({Path.GetFileName(path)}): {warning}");
+                AppendLog(Strings.Log.SazImportWarning(Path.GetFileName(path), warning));
         }
         _rightTabs.SelectedIndex = importedToComposer ? 1 : 0;
     }
@@ -722,10 +712,10 @@ public sealed class MainForm : Form, IMessageFilter
     {
         var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Font = Palette.UiFont };
 
-        var clear = new ToolStripButton("Clear") { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        var clear = new ToolStripButton(Strings.Toolbar.Clear) { DisplayStyle = ToolStripItemDisplayStyle.Text };
         clear.Click += (_, _) => _store.Clear();
 
-        var composer = new ToolStripButton("Composer  (Ctrl+K)") { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        var composer = new ToolStripButton(Strings.Toolbar.Composer) { DisplayStyle = ToolStripItemDisplayStyle.Text };
         composer.Click += (_, _) =>
         {
             _rightTabs.SelectedIndex = 1;
@@ -761,9 +751,9 @@ public sealed class MainForm : Form, IMessageFilter
     {
         if (_themeToggle is null) return;
 
-        var target = Palette.IsLightMode ? "Dark" : "Light";
-        _themeToggle.Text = target + " mode";
-        _themeToggle.ToolTipText = "Switch to " + target.ToLowerInvariant() + " mode";
+        var target = Palette.IsLightMode ? Strings.Toolbar.DarkMode : Strings.Toolbar.LightMode;
+        _themeToggle.Text = Strings.Toolbar.ThemeToggle(target);
+        _themeToggle.ToolTipText = Strings.Toolbar.ThemeToggleTooltip(target);
     }
 
     private void RefreshStatusIcons()
@@ -803,17 +793,17 @@ public sealed class MainForm : Form, IMessageFilter
         out ToolStripStatusLabel selectedSessionDetails, out ToolStripStatusLabel zoom)
     {
         var bar = new StatusStrip { Font = Palette.UiFont };
-        status = new ToolStripStatusLabel("Starting...") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-        capture = NewStatusAction("Capturing", CaptureOnIcon, "Click to start or stop proxy capture.");
-        scope = NewStatusAction("All Processes", ScopeIcon, "Click to choose which processes are shown.");
-        breakpoints = new ToolStripStatusLabel("Breakpoints: None", BreakpointIcon)
+        status = new ToolStripStatusLabel(Strings.StatusBar.Starting) { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+        capture = NewStatusAction(Strings.StatusBar.Capturing, CaptureOnIcon, Strings.StatusBar.CaptureTooltip);
+        scope = NewStatusAction(Strings.CaptureScopes.AllProcesses, ScopeIcon, Strings.StatusBar.ScopeTooltip);
+        breakpoints = new ToolStripStatusLabel(Strings.StatusBar.BreakpointsNone, BreakpointIcon)
         {
             BorderSides = ToolStripStatusLabelBorderSides.Left,
-            ToolTipText = "Breakpoint controls are coming soon.",
+            ToolTipText = Strings.StatusBar.BreakpointsTooltip,
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
             TextImageRelation = TextImageRelation.ImageBeforeText,
         };
-        sessions = new ToolStripStatusLabel("0 sessions", SessionsIcon)
+        sessions = new ToolStripStatusLabel(Strings.StatusBar.NoSessions, SessionsIcon)
         {
             BorderSides = ToolStripStatusLabelBorderSides.Left,
             DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
@@ -825,13 +815,13 @@ public sealed class MainForm : Form, IMessageFilter
             Font = Palette.Mono,
             ForeColor = Palette.TextDim,
             Visible = false,
-            ToolTipText = "Timing and transfer details for the selected session.",
+            ToolTipText = Strings.StatusBar.SelectedSessionTooltip,
         };
         zoom = new ToolStripStatusLabel
         {
             BorderSides = ToolStripStatusLabelBorderSides.Left,
             Visible = false,
-            ToolTipText = "UI font size. Ctrl+MouseWheel, or View > Zoom, to change it.",
+            ToolTipText = Strings.StatusBar.ZoomTooltip,
         };
         // The live proxy status expands through the centre; placing selected-session details
         // after it pins the timing/transfer summary to the status bar's right edge.
@@ -926,7 +916,7 @@ public sealed class MainForm : Form, IMessageFilter
         if (_updateCheckInProgress)
         {
             if (manual)
-                MessageBox.Show(this, "Piper is already checking for updates.", "Piper",
+                MessageBox.Show(this, Strings.Updates.AlreadyChecking, Strings.App.Name,
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -940,27 +930,26 @@ public sealed class MainForm : Form, IMessageFilter
 
             if (result.Error is not null)
             {
-                AppendLog($"Update check failed: {result.Error}");
+                AppendLog(Strings.Log.UpdateCheckFailed(result.Error));
                 if (manual)
-                    MessageBox.Show(this, result.Error, "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, result.Error, Strings.Updates.CheckCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
             if (!result.IsUpdateAvailable)
             {
-                AppendLog($"Piper {CurrentVersion} is up to date.");
+                AppendLog(Strings.Log.UpToDate(CurrentVersion));
                 if (manual)
-                    MessageBox.Show(this, $"Piper {CurrentVersion} is up to date.", "Check for updates",
+                    MessageBox.Show(this, Strings.Updates.UpToDate(CurrentVersion), Strings.Updates.CheckCaption,
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             var release = result.Release!;
-            AppendLog($"Piper {release.Version} is available.");
+            AppendLog(Strings.Log.UpdateAvailable(release.Version));
             var answer = MessageBox.Show(this,
-                $"Piper {release.Version} is available.\r\n\r\nDownload and install it now?\r\n\r\n"
-                + "The installer will verify its SHA-256 checksum, then Piper will close so Windows can update it.",
-                "Piper update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                Strings.Updates.AvailableBody(release.Version),
+                Strings.Updates.AvailableCaption, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
             if (answer != DialogResult.Yes) return;
 
             await DownloadAndInstallUpdateAsync(release);
@@ -971,9 +960,9 @@ public sealed class MainForm : Form, IMessageFilter
         }
         catch (Exception ex)
         {
-            AppendLog($"Update check failed: {ex.Message}");
+            AppendLog(Strings.Log.UpdateCheckFailed(ex.Message));
             if (manual && !IsDisposed)
-                MessageBox.Show(this, ex.Message, "Check for updates", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, ex.Message, Strings.Updates.CheckCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
@@ -984,13 +973,13 @@ public sealed class MainForm : Form, IMessageFilter
 
     private async Task DownloadAndInstallUpdateAsync(UpdateRelease release)
     {
-        AppendLog($"Downloading Piper {release.Version} installer...");
+        AppendLog(Strings.Log.DownloadingInstaller(release.Version));
         var result = await _updates.DownloadAndVerifyInstallerAsync(release, _updatesCancellation.Token);
         if (IsDisposed) return;
         if (!result.IsDownloaded)
         {
-            AppendLog($"Update download failed: {result.Error}");
-            MessageBox.Show(this, result.Error, "Piper update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            AppendLog(Strings.Log.UpdateDownloadFailed(result.Error));
+            MessageBox.Show(this, result.Error, Strings.Updates.InstallCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -1003,13 +992,13 @@ public sealed class MainForm : Form, IMessageFilter
                 WorkingDirectory = Path.GetDirectoryName(result.InstallerPath),
                 UseShellExecute = true,
             });
-            AppendLog($"Verified Piper {release.Version} installer started. Closing Piper for the update.");
+            AppendLog(Strings.Log.InstallerStarted(release.Version));
             Close();
         }
         catch (Exception ex)
         {
-            AppendLog($"Could not start the verified installer: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Piper update", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppendLog(Strings.Log.InstallerStartFailed(ex.Message));
+            MessageBox.Show(this, ex.Message, Strings.Updates.InstallCaption, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -1033,8 +1022,8 @@ public sealed class MainForm : Form, IMessageFilter
         {
             // Reported in the log and the status bar rather than a dialog, so a busy port
             // never blocks the UI and the full exception stays available for diagnosis.
-            AppendLog($"Could not listen on 127.0.0.1:{_options.Port} - {ex.GetType().Name}: {ex.Message}");
-            AppendLog("Another proxy may be using the port. Change it, or stop the other proxy, then press F12.");
+            AppendLog(Strings.Log.ListenFailed(_options.Port, ex.GetType().Name, ex.Message));
+            AppendLog(Strings.Log.PortInUseHint);
             UpdateCaptureStatus();
             _rightTabs.SelectedIndex = 4; // surface the Log tab (Inspectors, Composer, Filters, AutoResponder, Log)
         }
@@ -1046,7 +1035,7 @@ public sealed class MainForm : Form, IMessageFilter
 
         _captureToggleInProgress = true;
         var enabling = !_proxy.IsRunning;
-        _captureStatusLabel.Text = enabling ? "Enabling proxy..." : "Disabling proxy...";
+        _captureStatusLabel.Text = enabling ? Strings.StatusBar.EnablingProxy : Strings.StatusBar.DisablingProxy;
         _captureStatusLabel.ForeColor = Palette.TextDim;
         _captureStatusLabel.Enabled = false;
 
@@ -1060,7 +1049,7 @@ public sealed class MainForm : Form, IMessageFilter
             {
                 await _proxy.StopAsync();
                 if (RestoreSystemProxy())
-                    AppendLog("Capture stopped and the previous system proxy settings were restored.");
+                    AppendLog(Strings.Log.CaptureStoppedProxyRestored);
             }
             else
             {
@@ -1070,8 +1059,8 @@ public sealed class MainForm : Form, IMessageFilter
         }
         catch (Exception ex)
         {
-            AppendLog($"Could not change capture state: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppendLog(Strings.Log.CaptureStateFailed(ex.Message));
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -1085,7 +1074,7 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateCaptureStatus()
     {
         if (_captureToggleInProgress) return;
-        _captureStatusLabel.Text = _proxy.IsRunning ? "Capturing" : "Not Capturing";
+        _captureStatusLabel.Text = _proxy.IsRunning ? Strings.StatusBar.Capturing : Strings.StatusBar.NotCapturing;
         _captureStatusLabel.ForeColor = _proxy.IsRunning ? Palette.StatusOk : Palette.StatusServerError;
         _captureStatusLabel.Image = _proxy.IsRunning ? CaptureOnIcon : CaptureOffIcon;
     }
@@ -1109,7 +1098,7 @@ public sealed class MainForm : Form, IMessageFilter
         _captureScope = scope;
         ApplyCaptureScope();
         SaveStatusBarSettings();
-        AppendLog($"Capture scope set to {CaptureScopeText(scope)}.");
+        AppendLog(Strings.Log.CaptureScopeSet(CaptureScopeText(scope)));
     }
 
     private void ApplyCaptureScope()
@@ -1147,10 +1136,10 @@ public sealed class MainForm : Form, IMessageFilter
 
     private static string CaptureScopeText(CaptureScope scope) => scope switch
     {
-        CaptureScope.AllProcesses => "All Processes",
-        CaptureScope.WebBrowsers => "Web Browsers",
-        CaptureScope.NonBrowsers => "Non-Browsers",
-        CaptureScope.HideAll => "Hide All",
+        CaptureScope.AllProcesses => Strings.CaptureScopes.AllProcesses,
+        CaptureScope.WebBrowsers => Strings.CaptureScopes.WebBrowsers,
+        CaptureScope.NonBrowsers => Strings.CaptureScopes.NonBrowsers,
+        CaptureScope.HideAll => Strings.CaptureScopes.HideAll,
         _ => throw new ArgumentOutOfRangeException(nameof(scope)),
     };
 
@@ -1168,17 +1157,17 @@ public sealed class MainForm : Form, IMessageFilter
             _proxySnapshot = SystemProxy.Capture(endpoint);
             SystemProxyBackupStore.Save(SystemProxyBackup.From(endpoint, _proxySnapshot));
             SystemProxy.Enable(endpoint);
-            AppendLog($"System proxy set to {endpoint}.");
+            AppendLog(Strings.Log.SystemProxySet(endpoint));
         }
         catch (Exception ex)
         {
             // Enable writes several values, so put back whatever was captured rather than leaving
             // the machine half-pointed at a proxy that is not running.
             try { RestoreSystemProxy(); }
-            catch (Exception restoreFailure) { AppendLog($"Could not undo the partial change: {restoreFailure.Message}"); }
+            catch (Exception restoreFailure) { AppendLog(Strings.Log.PartialChangeUndoFailed(restoreFailure.Message)); }
 
-            AppendLog($"Could not set the system proxy: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppendLog(Strings.Log.SystemProxyFailed(ex.Message));
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -1200,21 +1189,14 @@ public sealed class MainForm : Form, IMessageFilter
     {
         if (TrustStore.IsTrusted(_ca.RootCertificate))
         {
-            MessageBox.Show(this, "The Piper root certificate is already trusted.",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, Strings.Certificates.AlreadyTrusted,
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         var answer = MessageBox.Show(this,
-            "Add the Piper root certificate to your user's Trusted Root store?\r\n\r\n"
-            + "This is required to inspect HTTPS traffic, and it is a real security tradeoff: "
-            + "anything holding the matching private key - which is stored unencrypted in your "
-            + "user profile - can impersonate any HTTPS site to this Windows account.\r\n\r\n"
-            + "Only do this on a machine you control, and use Tools > Remove trusted root "
-            + "certificate when you are finished.\r\n\r\n"
-            + $"Private key location:\r\n{_ca.RootPfxPath}\r\n\r\n"
-            + $"Thumbprint:\r\n{_ca.RootCertificate.Thumbprint}",
-            "Trust the Piper root certificate",
+            Strings.Certificates.TrustBody(_ca.RootPfxPath, _ca.RootCertificate.Thumbprint),
+            Strings.Certificates.TrustCaption,
             MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
 
         if (answer != DialogResult.OK) return;
@@ -1222,12 +1204,12 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
-            AppendLog($"Root certificate {_ca.RootCertificate.Thumbprint} added to the current user's trusted roots.");
+            AppendLog(Strings.Log.RootTrusted(_ca.RootCertificate.Thumbprint));
         }
         catch (Exception ex)
         {
-            AppendLog($"Trusting the root failed: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppendLog(Strings.Log.TrustingRootFailed(ex.Message));
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -1236,13 +1218,13 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             var removed = TrustStore.Uninstall();
-            AppendLog($"Removed {removed} Piper root certificate(s) from the trusted roots.");
-            MessageBox.Show(this, $"Removed {removed} Piper root certificate(s).",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            AppendLog(Strings.Log.RootsRemoved(removed));
+            MessageBox.Show(this, Strings.Certificates.Removed(removed),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -1250,76 +1232,28 @@ public sealed class MainForm : Form, IMessageFilter
     {
         using var dialog = new SaveFileDialog
         {
-            Title = "Export the Piper root certificate",
-            Filter = "Certificate (*.cer)|*.cer|All files (*.*)|*.*",
-            FileName = "Piper-Root.cer",
+            Title = Strings.Certificates.ExportCaption,
+            Filter = Strings.Certificates.ExportFilter,
+            FileName = Strings.Certificates.ExportFileName,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         try
         {
             _ca.ExportRootTo(dialog.FileName);
-            AppendLog($"Root certificate exported to {dialog.FileName}.");
+            AppendLog(Strings.Log.RootExported(dialog.FileName));
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
     private void ShowSearchHelp()
     {
-        const string help = """
-            The same query grammar works in Find Sessions, the session filter box and the
-            Composer search. Terms are combined with AND.
-
-            Ctrl+F opens Find Sessions: it marks matching sessions in a colour you pick and
-            hides nothing. F3 selects the next match. Ctrl+Shift+F focuses the filter box,
-            which does hide the sessions that do not match.
-
-              checkout               substring across URL, headers and text bodies
-              "exact phrase"         quoted literal
-              /orders\/[0-9]+/       regular expression
-
-              method:POST            also m:
-              method:GET|POST        alternatives
-              host:api.example.com   also h:
-              path:/v2/users
-              url:token
-              status:404             also s:
-              status:4xx             class shorthand
-              status:>=400           comparisons: > >= < <=
-              status:200..299        ranges
-              ct:json                content type
-
-              header:Authorization   name or value, request or response
-              header:Accept=json     specific header, specific value
-              reqheader: respheader: restrict to one side
-
-              body:user_id           either body
-              req:  resp:            restrict to one side
-
-              size:>100kb            response size; b/kb/mb/gb suffixes
-              reqsize:>0
-              dur:>500               duration in milliseconds
-              id:1234
-
-              is:https  is:http  is:tunnel  is:composed  is:captured
-              is:error  is:ok  is:redirect  is:pending  is:complete
-              is:json  is:xml  is:html  is:image  is:script  is:css
-              is:slow  is:cached  is:body
-
-              -host:cdn.example.com  negate any term with - or !
-
-            An unrecognised field is searched literally, so a pasted URL works as typed.
-
-            Example:
-              method:POST host:api status:>=400 -is:image body:"order"
-            """;
-
         using var dialog = new Form
         {
-            Text = "Search syntax",
+            Text = Strings.SearchHelp.Caption,
             Width = 660,
             Height = 720,
             StartPosition = FormStartPosition.CenterParent,
@@ -1331,7 +1265,7 @@ public sealed class MainForm : Form, IMessageFilter
             ReadOnly = true,
             ScrollBars = ScrollBars.Vertical,
             Font = Palette.Mono,
-            Text = help.ReplaceLineEndings("\r\n"),
+            Text = Strings.SearchHelp.Body.ReplaceLineEndings("\r\n"),
             BorderStyle = BorderStyle.None,
         };
         dialog.Controls.Add(text);
@@ -1452,7 +1386,9 @@ public sealed class MainForm : Form, IMessageFilter
         _zoomInItem.Enabled = FontScale.Step < FontScaleSettingsStore.MaxStep;
         _zoomOutItem.Enabled = FontScale.Step > FontScaleSettingsStore.MinStep;
         _zoomResetItem.Enabled = !FontScale.IsDefault;
-        _zoomResetItem.Text = FontScale.IsDefault ? "&Reset zoom" : $"&Reset zoom (now {FontScale.Percent}%)";
+        _zoomResetItem.Text = FontScale.IsDefault
+            ? Strings.Menu.ResetZoom
+            : Strings.Menu.ResetZoomTo(FontScale.Percent);
     }
 
     private static void SaveFontScaleSettings() => FontScaleSettingsStore.Save(new FontScaleSettings
@@ -1466,7 +1402,7 @@ public sealed class MainForm : Form, IMessageFilter
         // Only worth the space when it is not the default, so a stray Ctrl+wheel is explainable
         // rather than mysterious. The text is cleared rather than left stale behind a hidden label,
         // because accessibility tools still report the text of one that is merely not visible.
-        _zoomLabel.Text = FontScale.IsDefault ? string.Empty : $"Zoom {FontScale.Percent}%";
+        _zoomLabel.Text = FontScale.IsDefault ? string.Empty : Strings.StatusBar.Zoom(FontScale.Percent);
         _zoomLabel.Visible = !FontScale.IsDefault;
     }
 
@@ -1483,8 +1419,7 @@ public sealed class MainForm : Form, IMessageFilter
         // let it inject terms of its own, so refuse it before it reaches either.
         if (!HostFilterTerm.IsFilterableHost(host))
         {
-            AppendLog("Hide this host: that session's host is not usable as a filter pattern, "
-                + "so nothing was hidden.");
+            AppendLog(Strings.Log.HideHostNotFilterable);
             return;
         }
 
@@ -1498,20 +1433,15 @@ public sealed class MainForm : Form, IMessageFilter
         var wasShowOnly = settings.HostsMode != 1;
         if (!settings.HideHost(host))
         {
-            AppendLog($"Hide this host: {host} is hidden in the capture list for this session only. "
-                + "The Filters tab is showing only specific hosts, which cannot also carry an "
-                + "exception, so switch its Hosts list to \"Hide the following Hosts\" to keep it.");
+            AppendLog(Strings.Log.HideHostShowOnlyConflict(host));
             return;
         }
 
         _filterPanel.ApplySettings(settings);
         if (wasShowOnly && settings.HostsMode == 1)
-            AppendLog("Hide this host: the Filters tab's Hosts list had nothing ticked, so it "
-                + "switched to \"Hide the following Hosts\".");
+            AppendLog(Strings.Log.HideHostSwitchedToHideMode);
 
-        AppendLog($"Hide this host: the Filters tab's Hosts list now hides {host}. It stays hidden "
-            + "here for this session; the saved list applies when you tick \"Use Filters\" there, "
-            + "or on the next start if it is ticked already.");
+        AppendLog(Strings.Log.HideHostAdded(host));
     }
 
     /// <summary>Hides a host in the capture list only, for the rest of this session.</summary>
@@ -1530,7 +1460,7 @@ public sealed class MainForm : Form, IMessageFilter
 
     private void AppendLog(string message)
     {
-        var line = $"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}";
+        var line = Strings.Log.Line(DateTime.Now, message);
         if (_logView.TextLength > 200_000) _logView.Clear();
         _logView.AppendText(line);
     }
@@ -1538,8 +1468,8 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateStatus()
     {
         _statusLabel.Text = _proxy.IsRunning
-            ? $"Listening on {_proxy.Endpoint}   -   HTTPS decryption {(_options.DecryptHttps ? "on" : "off")}"
-            : "Not capturing";
+            ? Strings.StatusBar.Listening(_proxy.Endpoint, _options.DecryptHttps)
+            : Strings.StatusBar.NotCapturingStatus;
         UpdateCaptureStatus();
         UpdateSessionsStatus();
         _autoResponder.RefreshStatistics();
@@ -1550,8 +1480,8 @@ public sealed class MainForm : Form, IMessageFilter
         var total = _store.Count;
         var selected = _sessionList.SelectedSessionCount;
         _sessionsLabel.Text = selected == 0
-            ? $"{total:N0} sessions"
-            : $"{selected:N0} / {total:N0} sessions";
+            ? Strings.StatusBar.Sessions(total)
+            : Strings.StatusBar.Sessions(selected, total);
     }
 
     private void QueueSessionsStatusUpdate()
@@ -1592,7 +1522,7 @@ public sealed class MainForm : Form, IMessageFilter
             FilterSettingsStore.Save(_filterPanel.Settings);
             SaveStatusBarSettings();
             try { RestoreSystemProxy(); }
-            catch (Exception ex) { AppendLog($"Could not restore the system proxy: {ex.Message}"); }
+            catch (Exception ex) { AppendLog(Strings.Log.SystemProxyRestoreFailed(ex.Message)); }
 
             base.OnFormClosing(e);
             return;
@@ -1619,14 +1549,14 @@ public sealed class MainForm : Form, IMessageFilter
     {
         _statusTimer.Stop();
         Enabled = false;
-        Text = "Piper - Closing...";
+        Text = Strings.App.ClosingTitle;
 
         try
         {
             if (_proxySnapshot is { } snapshot)
             {
-                _statusLabel.Text = "Restoring your system proxy...";
-                _sessionsLabel.Text = "Please wait";
+                _statusLabel.Text = Strings.StatusBar.RestoringSystemProxy;
+                _sessionsLabel.Text = Strings.StatusBar.PleaseWait;
                 await Task.Yield(); // Let the status change paint before WinINET is notified.
 
                 await Task.Run(() => SystemProxy.Restore(snapshot));
@@ -1636,8 +1566,8 @@ public sealed class MainForm : Form, IMessageFilter
 
             if (_proxy.IsRunning)
             {
-                _statusLabel.Text = "Stopping capture...";
-                _sessionsLabel.Text = "Please wait";
+                _statusLabel.Text = Strings.StatusBar.StoppingCapture;
+                _sessionsLabel.Text = Strings.StatusBar.PleaseWait;
                 await Task.Yield();
                 await _proxy.StopAsync();
             }
@@ -1651,13 +1581,13 @@ public sealed class MainForm : Form, IMessageFilter
             // pointed at a closed Piper instance would break the user's network access.
             _shutdownInProgress = false;
             Enabled = true;
-            Text = "Piper";
+            Text = Strings.App.Name;
             _statusTimer.Start();
             UpdateStatus();
-            AppendLog($"Could not finish shutdown: {ex.Message}");
+            AppendLog(Strings.Log.ShutdownFailed(ex.Message));
             MessageBox.Show(this,
-                $"Piper could not restore the system proxy, so it will remain open.\r\n\r\n{ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Strings.Shutdown.ProxyRestoreFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

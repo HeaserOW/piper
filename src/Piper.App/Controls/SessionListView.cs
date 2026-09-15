@@ -73,7 +73,7 @@ public sealed class SessionListView : UserControl
         _filterBox = new TextBox
         {
             Dock = DockStyle.Fill,
-            PlaceholderText = "Filter  e.g.  status:4xx host:api  -is:image  body:\"order id\"",
+            PlaceholderText = Strings.SessionList.FilterPlaceholder,
             Font = Palette.Mono,
         };
         _filterBox.TextChanged += (_, _) => ApplyFilter();
@@ -95,15 +95,15 @@ public sealed class SessionListView : UserControl
         };
         DarkListView.EnableDoubleBuffering(_list);
 
-        _list.Columns.Add("#", 52, HorizontalAlignment.Right);
-        _list.Columns.Add("Result", 55, HorizontalAlignment.Left);
-        _list.Columns.Add("Method", 62, HorizontalAlignment.Left);
-        _list.Columns.Add("Host", 170, HorizontalAlignment.Left);
-        _list.Columns.Add("Path", 300, HorizontalAlignment.Left);
-        _list.Columns.Add("Type", 130, HorizontalAlignment.Left);
-        _list.Columns.Add("Process", 110, HorizontalAlignment.Left);
-        _list.Columns.Add("Size", 80, HorizontalAlignment.Right);
-        _list.Columns.Add("Time", 70, HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnId, 52, HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnResult, 55, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnMethod, 62, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnHost, 170, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnPath, 300, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnType, 130, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnProcess, 110, HorizontalAlignment.Left);
+        _list.Columns.Add(Strings.SessionList.ColumnSize, 80, HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnTime, 70, HorizontalAlignment.Right);
         DarkListView.AddFillerColumn(_list);
         _list.Resize += (_, _) => ExpandColumnsToView();
 
@@ -315,7 +315,7 @@ public sealed class SessionListView : UserControl
         // parses away to nothing, such as status:abc, still arrives here.
         if (_findQuery.IsEmpty)
         {
-            ReportFind("That query has nothing to match.");
+            ReportFind(Strings.SessionList.FindNothingToMatch);
             return;
         }
 
@@ -331,7 +331,7 @@ public sealed class SessionListView : UserControl
         if (matches.Count == 0)
         {
             // No mark changed, so nothing needs repainting.
-            ReportFind("No sessions matched.");
+            ReportFind(Strings.SessionList.FindNoMatches);
             return;
         }
 
@@ -340,13 +340,13 @@ public sealed class SessionListView : UserControl
         if (request.SelectMatches) SelectOnlyIndices(matches);
 
         var outcome = request.Highlight is null
-            ? $"{matches.Count:N0} sessions matched and had their marks removed."
-            : $"{matches.Count:N0} sessions matched and are marked.";
+            ? Strings.SessionList.FindMarksRemoved(matches.Count)
+            : Strings.SessionList.FindMarked(matches.Count);
 
         // Context-menu actions work on the selection, so a capped selection must not look like the
         // whole result: say so rather than let an export or a delete quietly cover part of it.
         if (request.SelectMatches && matches.Count > MaxSelectedMatches)
-            ReportFind(outcome + $"{Environment.NewLine}Only the first {MaxSelectedMatches:N0} are selected.");
+            ReportFind(outcome + Strings.SessionList.FindSelectionCapped(MaxSelectedMatches));
         else if (_findQuery.Warnings.Count > 0)
             ReportFind(outcome);
     }
@@ -362,7 +362,8 @@ public sealed class SessionListView : UserControl
             message += Environment.NewLine + Environment.NewLine
                 + string.Join(Environment.NewLine, _findQuery.Warnings);
 
-        MessageBox.Show(FindForm(), message, "Find Sessions", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show(FindForm(), message, Strings.SessionList.FindCaption,
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     /// <summary>
@@ -531,13 +532,15 @@ public sealed class SessionListView : UserControl
         var session = _visible[e.ItemIndex];
         var item = new ListViewItem(session.Id.ToString());
         item.SubItems.Add(session.StatusText);
-        item.SubItems.Add(session.IsTunnel ? "CONNECT" : session.Method);
+        item.SubItems.Add(session.IsTunnel ? Strings.SessionList.TunnelMethod : session.Method);
         item.SubItems.Add(session.Host);
         item.SubItems.Add(session.Path + session.Query);
         item.SubItems.Add(Format.ShortContentType(session.ContentType));
-        item.SubItems.Add(string.IsNullOrEmpty(session.ProcessName) ? "-" : session.ProcessName);
+        item.SubItems.Add(string.IsNullOrEmpty(session.ProcessName) ? Strings.SessionList.UnknownProcess : session.ProcessName);
         item.SubItems.Add(Format.Size(session.ResponseSize));
-        item.SubItems.Add(session.Completed is null ? "..." : $"{session.Duration.TotalMilliseconds:N0} ms");
+        item.SubItems.Add(session.Completed is null
+            ? Strings.SessionList.PendingDuration
+            : Strings.SessionList.Duration(session.Duration.TotalMilliseconds));
         item.SubItems.Add(string.Empty); // filler column
         item.Tag = session;
         e.Item = item;
@@ -690,43 +693,43 @@ public sealed class SessionListView : UserControl
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
 
-        var resend = new ToolStripMenuItem("&Resend request\tCtrl+R", null, (_, _) => ResendSelected());
+        var resend = Menus.Item(Strings.SessionList.Resend, Strings.Shortcuts.CtrlR, (_, _) => ResendSelected());
         menu.Items.Add(resend);
-        menu.Items.Add("Send to &Composer\tCtrl+E", null, (_, _) =>
+        menu.Items.Add(Menus.Item(Strings.SessionList.SendToComposer, Strings.Shortcuts.CtrlE, (_, _) =>
         {
             if (SelectedSession is { } session) SendToComposerRequested?.Invoke(this, session);
-        });
-        var autoResponder = menu.Items.Add("Create AutoResponder r&ule", null, (_, _) =>
+        }));
+        var autoResponder = menu.Items.Add(Strings.SessionList.CreateAutoResponderRule, null, (_, _) =>
         {
             if (SelectedSession is { } session) SendToAutoResponderRequested?.Invoke(this, session);
         });
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Copy &URL\tCtrl+C", null, (_, _) => CopyUrls());
-        menu.Items.Add("Copy as c&url", null, (_, _) => CopyAsCurl());
-        menu.Items.Add("Copy full &session", null, (_, _) => CopyFullSession());
-        var save = new ToolStripMenuItem("&Save");
-        var saveResponseBody = save.DropDownItems.Add("Response &body only...", null, (_, _) => SaveResponseBody());
-        var saveSessionsAsSaz = save.DropDownItems.Add("Selected sessions as &SAZ...", null, (_, _) => SaveSelectedSessionsAsSaz());
+        menu.Items.Add(Menus.Item(Strings.SessionList.CopyUrl, Strings.Shortcuts.CtrlC, (_, _) => CopyUrls()));
+        menu.Items.Add(Strings.SessionList.CopyAsCurl, null, (_, _) => CopyAsCurl());
+        menu.Items.Add(Strings.SessionList.CopyFullSession, null, (_, _) => CopyFullSession());
+        var save = new ToolStripMenuItem(Strings.SessionList.SaveMenu);
+        var saveResponseBody = save.DropDownItems.Add(Strings.SessionList.SaveResponseBody, null, (_, _) => SaveResponseBody());
+        var saveSessionsAsSaz = save.DropDownItems.Add(Strings.SessionList.SaveSessionsAsSaz, null, (_, _) => SaveSelectedSessionsAsSaz());
         menu.Items.Add(save);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("&Find sessions...\tCtrl+F", null, (_, _) => ShowFindSessions());
-        menu.Items.Add("Find &next\tF3", null, (_, _) => FindNext());
-        var clearMarks = menu.Items.Add("Clear find &marks", null, (_, _) => ClearMarks());
-        menu.Items.Add("Fi&lter sessions\tCtrl+Shift+F", null, (_, _) => FocusFilter());
-        menu.Items.Add("Filter to this &host", null, (_, _) =>
+        menu.Items.Add(Menus.Item(Strings.SessionList.FindSessions, Strings.Shortcuts.CtrlF, (_, _) => ShowFindSessions()));
+        menu.Items.Add(Menus.Item(Strings.SessionList.FindNext, Strings.Shortcuts.F3, (_, _) => FindNext()));
+        var clearMarks = menu.Items.Add(Strings.SessionList.ClearFindMarks, null, (_, _) => ClearMarks());
+        menu.Items.Add(Menus.Item(Strings.SessionList.FilterSessions, Strings.Shortcuts.CtrlShiftF, (_, _) => FocusFilter()));
+        menu.Items.Add(Strings.SessionList.FilterToThisHost, null, (_, _) =>
         {
             if (SelectedSession is { } session) FilterText = $"host:{session.Host}";
         });
-        menu.Items.Add("&Hide this host", null, (_, _) =>
+        menu.Items.Add(Strings.SessionList.HideThisHost, null, (_, _) =>
         {
             if (SelectedSession is { } session) HideHostRequested?.Invoke(this, session.Host);
         });
         menu.Items.Add(new ToolStripSeparator());
-        var textWizard = new ToolStripMenuItem("Send URL to Text&Wizard", null,
+        var textWizard = new ToolStripMenuItem(Strings.SessionList.SendUrlToTextWizard, null,
             (_, _) => TextWizardDialog.Open(FindForm(), SelectedSession?.Url));
         menu.Items.Add(textWizard);
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("&Remove selected\tDel", null, (_, _) => RemoveSelected());
+        menu.Items.Add(Menus.Item(Strings.SessionList.RemoveSelected, Strings.Shortcuts.Delete, (_, _) => RemoveSelected()));
         menu.Opening += (_, _) =>
         {
             textWizard.Enabled = SelectedSession is { Url.Length: > 0 };
@@ -771,8 +774,8 @@ public sealed class SessionListView : UserControl
 
         using var dialog = new SaveFileDialog
         {
-            Title = "Save response body",
-            Filter = "All files (*.*)|*.*",
+            Title = Strings.SessionList.SaveResponseBodyCaption,
+            Filter = Strings.Common.AllFilesFilter,
             FileName = SuggestedResponseFileName(session, response),
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
@@ -785,8 +788,8 @@ public sealed class SessionListView : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not save the response body: {ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.SessionList.SaveResponseBodyFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -798,11 +801,11 @@ public sealed class SessionListView : UserControl
 
         using var dialog = new SaveFileDialog
         {
-            Title = "Save selected sessions as Fiddler SAZ",
-            Filter = "Fiddler SAZ captures (*.saz)|*.saz|All files (*.*)|*.*",
+            Title = Strings.SazImport.SaveCaption,
+            Filter = Strings.SazImport.SaveFilter,
             DefaultExt = "saz",
             AddExtension = true,
-            FileName = $"piper-capture-{DateTime.Now:yyyyMMdd-HHmmss}.saz",
+            FileName = Strings.SazImport.SuggestedFileName(DateTime.Now),
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return false;
 
@@ -813,8 +816,8 @@ public sealed class SessionListView : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not save the selected sessions: {ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.SessionList.SaveSessionsFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
     }
@@ -907,7 +910,7 @@ public sealed class SessionListView : UserControl
             "application/pdf" => ".pdf",
             _ => ".bin",
         };
-        return $"response-{session.Id}{extension}";
+        return Strings.SessionList.SuggestedResponseFileName(session.Id, extension);
     }
 
     private void CopyAsCurl()
