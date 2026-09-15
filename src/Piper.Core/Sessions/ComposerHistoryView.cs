@@ -75,6 +75,14 @@ public static class ComposerHistoryView
     public const int MaxTargetLength = 2048;
 
     /// <summary>
+    /// Longest method a row will show or group on. A method is the third field of the same
+    /// attacker-controlled request line as the target, and an imported archive bounds none of it,
+    /// so leaving it alone would let a payload simply move from the target into the method.
+    /// RFC 9110 tokens are short, so the ceiling can be too.
+    /// </summary>
+    public const int MaxMethodLength = 32;
+
+    /// <summary>
     /// Builds the visible rows. Sessions that are tunnels or carry no request are dropped, the rest
     /// are filtered by <paramref name="query"/> exactly as the flat list used to filter them.
     /// </summary>
@@ -134,7 +142,25 @@ public static class ComposerHistoryView
     /// What makes two sends "the same request" inside a host: the method and the full target. The
     /// query is part of it because /search?q=a and /search?q=b are different requests.
     /// </summary>
-    public static string RequestKey(Session session) => session.Method + " " + TargetOf(session);
+    public static string RequestKey(Session session) => MethodOf(session) + " " + TargetOf(session);
+
+    /// <summary>
+    /// The method a row shows and groups on, bounded and sanitised like the host and the target.
+    /// </summary>
+    /// <remarks>
+    /// This is not belt-and-braces. <see cref="RequestKey"/> runs for every session on every
+    /// rebuild -- so on every keystroke in the search box -- and its result is hashed, compared and
+    /// concatenated into an expand key, which an unbounded method turns into per-keystroke work
+    /// proportional to the whole history. The pane also glues the method to the sanitised target to
+    /// make one displayed string, so a bidi override in the method would reverse the target beside
+    /// it and a CRLF would break the tooltip into extra lines -- the very spoofs sanitising the
+    /// target was meant to prevent.
+    /// </remarks>
+    public static string MethodOf(Session session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        return Bound(session.Method, MaxMethodLength);
+    }
 
     /// <summary>
     /// The path-and-query a row shows and groups on.

@@ -141,6 +141,21 @@ internal static class ComposerHistoryViewTests
             runner.AreEqual(ComposerHistoryView.MaxTargetLength, ComposerHistoryView.TargetOf(longTarget).Length,
                 "an oversized request target is truncated");
 
+            // The method is the third field of the same request line, so leaving it alone would let
+            // a payload simply move there: it is hashed into a dictionary key on every keystroke,
+            // and the pane glues it to the sanitised target to make one displayed string.
+            var hostileMethod = new Session
+            {
+                Request = new HttpRequestData { Method = "GET‮" + new string('m', 50_000), RequestTarget = "/x" },
+            };
+            runner.AreEqual(ComposerHistoryView.MaxMethodLength, ComposerHistoryView.MethodOf(hostileMethod).Length,
+                "an oversized method is truncated");
+            runner.IsTrue(!ComposerHistoryView.MethodOf(hostileMethod).Contains('‮'),
+                "a bidi override in the method cannot reverse the target shown beside it");
+            runner.IsTrue(ComposerHistoryView.RequestKey(hostileMethod).Length
+                    <= ComposerHistoryView.MaxMethodLength + ComposerHistoryView.MaxTargetLength + 1,
+                "the expand key stays bounded whichever field carries the payload");
+
             return Task.CompletedTask;
         });
 

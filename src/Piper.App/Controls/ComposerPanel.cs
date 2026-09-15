@@ -202,17 +202,24 @@ public sealed class ComposerPanel : UserControl
     /// Recursive rather than a list of the big controls, because a drop lands on the deepest
     /// control under the cursor and that recursion has already set <see cref="Control.AllowDrop"/>
     /// on all of them. Any control left out would therefore not fall through to this panel -- it
-    /// would swallow the drop and do nothing, which is worse than not accepting it at all. The
-    /// response inspector and its children are skipped: they carry their own media-drop behaviour.
+    /// would swallow the drop and do nothing, which is worse than not accepting it at all.
+    ///
+    /// A control that already claims drops is left to whoever claimed it. At this point in
+    /// construction that is only the response inspector's image and video targets, which load a
+    /// dropped session's response as media; running both handlers would make one drop do two
+    /// unrelated things. Their children are still visited, because the inspector's tab strip claims
+    /// itself without claiming the pages inside it, and those pages would otherwise stay dead.
     /// </remarks>
     private void EnableSessionDrop(Control control)
     {
-        if (ReferenceEquals(control, _response)) return;
+        if (!control.AllowDrop)
+        {
+            control.AllowDrop = true;
+            control.DragEnter += OnSessionDragOver;
+            control.DragOver += OnSessionDragOver;
+            control.DragDrop += OnSessionDrop;
+        }
 
-        control.AllowDrop = true;
-        control.DragEnter += OnSessionDragOver;
-        control.DragOver += OnSessionDragOver;
-        control.DragDrop += OnSessionDrop;
         foreach (Control child in control.Controls) EnableSessionDrop(child);
     }
 

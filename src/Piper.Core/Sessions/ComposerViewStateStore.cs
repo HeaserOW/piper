@@ -86,6 +86,10 @@ public static class ComposerViewStateStore
     private static List<string> Clean(List<string>? hosts) => (hosts ?? [])
         .Where(ComposerHistoryView.IsDisplayableHost)
         .Distinct(StringComparer.OrdinalIgnoreCase)
+        // Ordered before the cap because the caller hands over a materialised HashSet, whose order
+        // is not meaningful and not stable between saves. Without this, which hosts survive past
+        // the ceiling could change on every write and a collapsed host could quietly come back.
+        .OrderBy(host => host, StringComparer.OrdinalIgnoreCase)
         .Take(MaxHosts)
         .ToList();
 }

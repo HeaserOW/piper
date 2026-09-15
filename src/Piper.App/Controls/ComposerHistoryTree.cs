@@ -42,6 +42,10 @@ public sealed class ComposerHistoryTree : UserControl
     private readonly HashSet<string> _collapsedHosts;
     private readonly HashSet<string> _expandedRequests = new(StringComparer.Ordinal);
 
+    // Build force-expands every host while a search is active, so the collapsed set and what the
+    // pane shows disagree for as long as the query stands.
+    private bool _searchActive;
+
     private Font? _measuredWith;
     private int _methodWidth;
 
@@ -154,6 +158,7 @@ public sealed class ComposerHistoryTree : UserControl
         var query = SearchQuery.Parse(_searchBox.Text);
         _searchBox.ForeColor = query.Warnings.Count > 0 ? Palette.StatusClientError : Palette.Text;
 
+        _searchActive = !query.IsEmpty;
         var selected = SelectedKeys();
         _rows = ComposerHistoryView.Build(_history, query, _collapsedHosts, _expandedRequests);
 
@@ -218,7 +223,8 @@ public sealed class ComposerHistoryTree : UserControl
     private static string LabelFor(ComposerRow row) => row.Kind switch
     {
         ComposerRowKind.Host => row.Host,
-        ComposerRowKind.Request => row.Session.Method + " " + ComposerHistoryView.TargetOf(row.Session),
+        ComposerRowKind.Request =>
+            ComposerHistoryView.MethodOf(row.Session) + " " + ComposerHistoryView.TargetOf(row.Session),
         _ => (row.Session.Completed ?? row.Session.Started).ToLocalTime().ToString("HH:mm:ss"),
     };
 
@@ -272,10 +278,11 @@ public sealed class ComposerHistoryTree : UserControl
 
         if (row.Kind == ComposerRowKind.Request)
         {
+            var method = ComposerHistoryView.MethodOf(row.Session);
             var methodWidth = Math.Min(MethodWidth(), available);
-            TextRenderer.DrawText(e.Graphics, row.Session.Method, Palette.Mono,
+            TextRenderer.DrawText(e.Graphics, method, Palette.Mono,
                 new Rectangle(left, e.Bounds.Y, methodWidth, e.Bounds.Height),
-                selected ? Palette.Text : Palette.ForMethod(row.Session.Method),
+                selected ? Palette.Text : Palette.ForMethod(method),
                 TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
             left += methodWidth;
             available = right - left;
@@ -488,6 +495,11 @@ public sealed class ComposerHistoryTree : UserControl
         // like it means.
         if (row.Kind == ComposerRowKind.Host)
         {
+            // Every host draws expanded during a search, so a click here would flip the persisted
+            // state while the pane visibly did nothing -- and the user would only discover it after
+            // clearing the query, or after a restart.
+            if (_searchActive) return;
+
             if (row.Expanded) _collapsedHosts.Add(row.Key);
             else _collapsedHosts.Remove(row.Key);
             ComposerViewStateStore.Save(new ComposerViewState { CollapsedHosts = [.. _collapsedHosts] });
