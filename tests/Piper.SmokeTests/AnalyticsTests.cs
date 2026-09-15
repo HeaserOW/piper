@@ -25,6 +25,12 @@ internal static class AnalyticsTests
             runner.AreEqual(1, known!.Properties.Count, "the unknown property key is dropped");
             runner.AreEqual("composer", known.Properties[AnalyticsProperties.Feature], "the known property is kept");
             runner.IsTrue(!known.Properties.ContainsKey("url"), "a smuggled url key never reaches the event");
+
+            // The run identifier travels outside the property bag, so it has to be sanitised by the
+            // boundary itself rather than by whoever happens to call it.
+            var hostileRun = AnalyticsSchema.Create(
+                AnalyticsEvents.AppStarted, null, DateTimeOffset.UtcNow, "https://bank.example/x?a=b");
+            runner.AreEqual(AnalyticsSchema.InvalidValue, hostileRun!.RunId, "a hostile run id is replaced");
             return Task.CompletedTask;
         });
 

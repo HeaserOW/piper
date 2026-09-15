@@ -481,7 +481,7 @@ public sealed class AnalyticsClient : IDisposable
                     parsed.Name,
                     properties,
                     parsed.Timestamp,
-                    AnalyticsSchema.SanitiseValue(parsed.RunId));
+                    parsed.RunId);
                 if (revalidated is not null)
                 {
                     batch.Add(revalidated);

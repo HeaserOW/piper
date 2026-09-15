@@ -190,7 +190,12 @@ public static class AnalyticsSchema
         {
             Name = name,
             Timestamp = timestamp,
-            RunId = runId,
+
+            // Sanitised here rather than relying on callers. The run identifier is not carried in
+            // the property bag - it deliberately has no entry in PropertyKeys - so this is the one
+            // string that would otherwise reach the query string without passing the boundary this
+            // method is documented to be.
+            RunId = SanitiseValue(runId),
             Properties = sanitised,
         };
     }
