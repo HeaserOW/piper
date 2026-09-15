@@ -53,11 +53,12 @@ internal static class DiagnosticsBundle
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var redacted = UserProfileDirectory.Length > 0
-            ? message.Replace(UserProfileDirectory, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase)
-            : message;
+        var redacted = Redact(message);
 
-        if (!redacted.AsSpan().ContainsAny(ControlCharacters)) return redacted;
+        // One predicate decides both whether to rewrite and what to rewrite. A hand-listed set of
+        // control characters here would silently pass through whatever it forgot - C1, DEL, U+0085
+        // - which is the opposite of what a sanitiser is for.
+        if (!HasControlCharacter(redacted)) return redacted;
         return string.Create(redacted.Length, redacted, static (span, source) =>
         {
             for (var index = 0; index < source.Length; index++)
@@ -65,8 +66,25 @@ internal static class DiagnosticsBundle
         });
     }
 
-    private static readonly System.Buffers.SearchValues<char> ControlCharacters =
-        System.Buffers.SearchValues.Create("\0\a\b\t\n\v\f\r");
+    /// <summary>
+    /// Text with the user's profile directory reduced to <c>%USERPROFILE%</c>. Used on its own for
+    /// content whose line breaks must survive, such as the crash log.
+    /// </summary>
+    public static string Redact(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        return UserProfileDirectory.Length > 0
+            ? text.Replace(UserProfileDirectory, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase)
+            : text;
+    }
+
+    private static bool HasControlCharacter(string text)
+    {
+        foreach (var character in text)
+            if (char.IsControl(character)) return true;
+        return false;
+    }
 
     /// <summary>
     /// The newest half of a log that has outgrown <paramref name="cap"/>, starting at a line
@@ -136,7 +154,10 @@ internal static class DiagnosticsBundle
             // copy more than the cap allows.
             var buffer = new byte[MaxCrashLogBytes];
             var read = file.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-            var text = Encoding.UTF8.GetString(buffer, 0, read);
+            // Redacted like every log line: a stack trace carries the paths it was thrown from,
+            // and the bundle promises the account name is not in it. Control characters are left
+            // alone here - a crash log is many lines by nature, and nothing interpolates into it.
+            var text = Redact(Encoding.UTF8.GetString(buffer, 0, read));
             if (!truncated) return text;
 
             // A tail that starts mid-line also starts mid-UTF-8-sequence, which decodes to a

@@ -9,7 +9,11 @@ internal static class DiagnosticsBundleTests
         var crashLog = Path.Combine(Path.GetTempPath(), $"piper-crash-{Guid.NewGuid():N}.log");
         try
         {
-            File.WriteAllText(crashLog, "InvalidOperationException: boom");
+            // A stack trace carries the paths it was thrown from, so the crash entry has to be
+            // redacted like the log is - the README promises the account name is in neither.
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            File.WriteAllText(crashLog, $"InvalidOperationException: boom{Environment.NewLine}"
+                + $"   at Piper.App.Thing.Method() in {profile}\\src\\Thing.cs:line 12");
 
             using var stream = new MemoryStream();
             DiagnosticsBundle.Write(stream, "Piper 0.5.0, elevated: no", "12:00:00  Ignored a drop", crashLog);
@@ -21,7 +25,10 @@ internal static class DiagnosticsBundleTests
                 "bundle holds the three diagnostic entries and no captured traffic");
             runner.AreEqual("12:00:00  Ignored a drop", ReadEntry(archive, "log.txt"), "log is copied verbatim");
             runner.AreEqual("Piper 0.5.0, elevated: no", ReadEntry(archive, "environment.txt"), "environment is copied verbatim");
-            runner.AreEqual("InvalidOperationException: boom", ReadEntry(archive, "crash.log"), "crash log is copied verbatim");
+            runner.AreEqual($"InvalidOperationException: boom{Environment.NewLine}"
+                + "   at Piper.App.Thing.Method() in %USERPROFILE%\\src\\Thing.cs:line 12",
+                ReadEntry(archive, "crash.log"),
+                "the crash log is copied with its line breaks intact and its paths redacted");
         }
         finally
         {
@@ -96,10 +103,26 @@ internal static class DiagnosticsBundleTests
         runner.AreEqual("evil.txt  12:00:00  Capture stopped",
             DiagnosticsBundle.SanitizeLogMessage("evil.txt\r\n12:00:00  Capture stopped"),
             "CR/LF in an interpolated value cannot start a new log line");
-        runner.AreEqual("a b c", DiagnosticsBundle.SanitizeLogMessage("a\tbc"),
-            "tabs and escapes are flattened too");
+
+        // Each control character on its own. An earlier version tested a hand-listed set before
+        // flattening with char.IsControl, so anything missing from the list - C1, DEL, U+0085 -
+        // passed through untouched, and the test hid it by putting a tab in the same string.
+        // Written as casts rather than escapes so this file holds no raw control bytes itself.
+        foreach (var control in new[]
+        {
+            (char)0x00, (char)0x07, (char)0x08, (char)0x09, (char)0x0a, (char)0x0b, (char)0x0c,
+            (char)0x0d, (char)0x0e, (char)0x1a, (char)0x1b, (char)0x1f, (char)0x7f, (char)0x85,
+            (char)0x9b,
+        })
+        {
+            runner.AreEqual("a b", DiagnosticsBundle.SanitizeLogMessage($"a{control}b"),
+                $"U+{(int)control:X4} is flattened on its own, not only alongside another control character");
+        }
+
         runner.AreEqual("nothing to do", DiagnosticsBundle.SanitizeLogMessage("nothing to do"),
             "an ordinary message is returned unchanged");
+        runner.AreEqual("café straße", DiagnosticsBundle.SanitizeLogMessage("café straße"),
+            "non-ASCII text is not mistaken for a control character");
 
         return Task.CompletedTask;
     });

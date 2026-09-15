@@ -465,7 +465,6 @@ public sealed class MainForm : Form, IMessageFilter
         {
             var name when Directory.Exists(path) => $"{name} (a folder)",
             var name when !File.Exists(path) => $"{name} (not on disk)",
-            var name when name.Length == 0 => $"{path} (no file name)",
             var name => $"{name} (not a .saz or .raz file)",
         });
         return $"dropped {paths.Length} file(s), none importable: "
@@ -1620,12 +1619,18 @@ public sealed class MainForm : Form, IMessageFilter
         var line = $"{DateTime.Now:HH:mm:ss}  {DiagnosticsBundle.SanitizeLogMessage(message)}{Environment.NewLine}";
         // Drop the oldest half rather than clearing. A long-running session used to reach the cap
         // and throw away every line, which left the diagnostics export empty for exactly the users
-        // whose problem took hours to show up. Trimmed from the text that is measured, not from a
-        // second read of the control: TextLength and Text come from separate native calls and need
-        // not agree, and an out-of-range slice here would throw inside the one path that must not.
-        var existing = _logView.Text;
-        if (existing.Length > LogCharacterCap)
-            _logView.Text = DiagnosticsBundle.TrimToNewestLines(existing, LogCharacterCap);
+        // whose problem took hours to show up.
+        //
+        // TextLength gates it because reading Text copies the whole control text - a large-object
+        // allocation on every line once the log is big. The trim then works off that copy alone:
+        // the two come from separate native calls and need not agree, and indexing one by the
+        // other could throw inside the one path that must never fail.
+        if (_logView.TextLength > LogCharacterCap)
+        {
+            var existing = _logView.Text;
+            if (existing.Length > LogCharacterCap)
+                _logView.Text = DiagnosticsBundle.TrimToNewestLines(existing, LogCharacterCap);
+        }
         _logView.AppendText(line);
     }
 
