@@ -317,19 +317,18 @@ public sealed class MainForm : Form, IMessageFilter
         // about - and without this the dialog would return on every launch with no way to settle it.
         if (Analytics.SpoolPath is null || Analytics.NoticeShown) return;
 
-        var answer = MessageBox.Show(this,
-            "Would you like to send anonymous feedback to help improve Piper?\r\n\r\n"
-            + "What is sent: which features you use, the type of any error, and the app version - tied only "
-            + "to a random installation ID.\r\n\r\n"
-            + "What is never sent: captured traffic, URLs, hostnames, headers, bodies, cookies, certificates, "
-            + "or your settings. Piper's reporting can only send values from a fixed list of words.\r\n\r\n"
-            + "This is off unless you turn it on. You can change it at any time, and read exactly what is "
-            + "queued, under Tools > Configurations > Privacy.",
-            "Collect anonymous feedback?",
-            MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        bool optedIn;
+        using (var dialog = new AnalyticsConsentDialog())
+        {
+            // The answer is the checkbox, not the dialog result: closing the window with the X or
+            // pressing Escape leaves it unticked, which is a decline rather than an unanswered
+            // question, and is recorded as such below.
+            dialog.ShowDialog(this);
+            optedIn = dialog.AnalyticsEnabled;
+        }
 
-        Analytics.SetEnabled(answer == DialogResult.Yes);
-        if (answer == DialogResult.Yes)
+        Analytics.SetEnabled(optedIn);
+        if (optedIn)
         {
             // Startup already tried to record this and was correctly refused, reporting being off
             // at the time. Without replaying it the run in which someone opts in is the one run
@@ -337,10 +336,9 @@ public sealed class MainForm : Form, IMessageFilter
             Analytics.Track(AnalyticsEvents.AppStarted);
         }
 
-
         // Recorded either way: the question is asked once, not repeated until the answer is yes.
         Analytics.RecordNoticeShown(CurrentVersion.ToString(3));
-        AppendLog(answer == DialogResult.Yes
+        AppendLog(optedIn
             ? "Anonymous feedback is on. Turn it off under Tools > Configurations > Privacy."
             : "Anonymous feedback is off. Turn it on under Tools > Configurations > Privacy.");
     }
@@ -1627,10 +1625,15 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateSessionsStatus()
     {
         var total = _store.Count;
-        if (total > 0 && !_reportedFirstSession)
+        if (total > 0 && !_reportedFirstSession && _store.Snapshot().Any(session => !session.IsUpdateCheck))
         {
             // Completes the activation funnel: installed, trusted, capturing, and now actually
             // seeing traffic. Reported once per run, and only ever as the fact that it happened.
+            //
+            // Piper's own startup update check lands in the session store like anything else, so a
+            // bare count is not evidence that capture works - it fires on every run, even with
+            // capture off and the certificate untrusted, which would make the funnel read as if
+            // every user succeeded.
             _reportedFirstSession = true;
             Analytics.Track(AnalyticsEvents.FirstSessionCaptured);
         }

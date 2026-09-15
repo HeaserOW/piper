@@ -237,8 +237,8 @@ public sealed class ConfigurationsDialog : Form
         _analyticsEnabled = AddOption(panel, "Send anonymous feedback", analyticsEnabled,
             "Sends which features you use, the type of any error, and the app version, tied only to a "
             + "random installation ID. Never sends captured traffic, URLs, hostnames, headers, bodies, "
-            + "cookies, certificates, or your settings. Turning this off also deletes the installation ID "
-            + "and discards anything not yet sent.",
+            + "cookies, certificates, or your settings. Turning this off also deletes the identifiers it "
+            + "reports with and discards anything not yet sent.",
             descriptionMaxWidth: 560);
 
         var queued = new GroupBox
