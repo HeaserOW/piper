@@ -347,8 +347,13 @@ The **Log** tab records what Piper is doing to itself: startup state, refused fi
 imports, capture and certificate decisions. **Help > Save diagnostics for a bug report...** writes
 that log, a summary of the machine and the tail of the local crash log to a zip you choose.
 
-The bundle contains no captured requests, responses, bodies, cookies, certificates or proxy
-configuration, and Piper never uploads it — attach it to a report yourself, after reading it.
+The bundle contains no captured requests, responses, bodies, cookies or certificates, and Piper
+never uploads it — you choose the destination and attach it to a report yourself.
+
+It is Piper's own log, not a redacted one. Your Windows account name is replaced with
+`%USERPROFILE%` and control characters are flattened so nothing can forge log lines, but a message
+can still name a host you filtered, an AutoResponder rule you wrote or a capture file you opened.
+Read it before sending it on.
 
 If dropping a `.saz` file onto the window does nothing, the log usually names the reason:
 

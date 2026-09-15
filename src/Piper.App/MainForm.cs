@@ -453,17 +453,23 @@ public sealed class MainForm : Form, IMessageFilter
             // (FileGroupDescriptor) that have no path on disk, so there is nothing to open.
             return formats.Length == 0
                 ? "the drop carried no recognised format."
-                : $"no dropped file, only {string.Join(", ", formats)}. Drag the .saz from a folder "
-                    + "window; a file dragged straight out of mail, an archive viewer or a browser "
-                    + "has not been written to disk yet.";
+                : $"no dropped file, only {DiagnosticsBundle.Summarise(formats, formats.Length, MaxLoggedNames)}. "
+                    + "Drag the .saz from a folder window; a file dragged straight out of mail, an "
+                    + "archive viewer or a browser has not been written to disk yet.";
         }
 
+        // Only the names that will be printed are examined. The count comes from the drag source,
+        // and probing every path of a dropped folder would stall the drop handler on the UI thread
+        // - for as long as an unreachable network share takes to time out, once per file.
         var rejected = paths.Select(path => Path.GetFileName(path) switch
         {
+            var name when Directory.Exists(path) => $"{name} (a folder)",
             var name when !File.Exists(path) => $"{name} (not on disk)",
+            var name when name.Length == 0 => $"{path} (no file name)",
             var name => $"{name} (not a .saz or .raz file)",
         });
-        return $"dropped {paths.Length} file(s), none importable: {string.Join(", ", rejected)}.";
+        return $"dropped {paths.Length} file(s), none importable: "
+            + $"{DiagnosticsBundle.Summarise(rejected, paths.Length, MaxLoggedNames)}.";
     }
 
     /// <summary>
@@ -757,8 +763,8 @@ public sealed class MainForm : Form, IMessageFilter
             // directory a user keeps captures in does not belong in an exported log.
             if (requested.Length > 0)
                 AppendLog("No SAZ file to import from "
-                    + $"{string.Join(", ", requested.Select(Path.GetFileName))}: a capture must be an "
-                    + "existing .saz or .raz file.");
+                    + $"{DiagnosticsBundle.Summarise(requested.Select(Path.GetFileName)!, requested.Length, MaxLoggedNames)}"
+                    + ": a capture must be an existing .saz or .raz file.");
             return;
         }
 
@@ -1599,22 +1605,34 @@ public sealed class MainForm : Form, IMessageFilter
         _sessionList.FilterText = string.IsNullOrWhiteSpace(current) ? term : $"{current} {term}";
     }
 
+    /// <summary>
+    /// Adds one line to the Log tab.
+    /// </summary>
+    /// <remarks>
+    /// Everything written here can leave the machine: Help &gt; Save diagnostics copies this text
+    /// into a zip the user forwards. Write call sites accordingly - no captured traffic, no
+    /// credentials, no key material - and keep in mind that a message may still name a host the
+    /// user browsed or a rule they wrote. <see cref="DiagnosticsBundle.SanitizeLogMessage"/> only
+    /// removes the account name and flattens control characters; it cannot judge content.
+    /// </remarks>
     private void AppendLog(string message)
     {
-        var line = $"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}";
+        var line = $"{DateTime.Now:HH:mm:ss}  {DiagnosticsBundle.SanitizeLogMessage(message)}{Environment.NewLine}";
         // Drop the oldest half rather than clearing. A long-running session used to reach the cap
         // and throw away every line, which left the diagnostics export empty for exactly the users
-        // whose problem took hours to show up.
-        if (_logView.TextLength > LogCharacterCap)
-        {
-            var kept = _logView.Text[(_logView.TextLength - (LogCharacterCap / 2))..];
-            var firstLine = kept.IndexOf(Environment.NewLine, StringComparison.Ordinal);
-            _logView.Text = firstLine < 0 ? kept : kept[(firstLine + Environment.NewLine.Length)..];
-        }
+        // whose problem took hours to show up. Trimmed from the text that is measured, not from a
+        // second read of the control: TextLength and Text come from separate native calls and need
+        // not agree, and an out-of-range slice here would throw inside the one path that must not.
+        var existing = _logView.Text;
+        if (existing.Length > LogCharacterCap)
+            _logView.Text = DiagnosticsBundle.TrimToNewestLines(existing, LogCharacterCap);
         _logView.AppendText(line);
     }
 
     private const int LogCharacterCap = 200_000;
+
+    /// <summary>How many names a log line lists before falling back to a count.</summary>
+    private const int MaxLoggedNames = 10;
 
     /// <summary>
     /// One line of machine state, logged at startup so that every exported diagnostics bundle
@@ -1677,11 +1695,17 @@ public sealed class MainForm : Form, IMessageFilter
             return;
         }
 
+        // States only what the code enforces. The bundle's allowlist is per file, not per line, so
+        // it cannot promise anything about what a log message says - and some of them name a host
+        // the user filtered or a rule they wrote. Claiming more than that would be a promise the
+        // next AppendLog call site could quietly break.
         MessageBox.Show(this,
             $"Saved {Path.GetFileName(dialog.FileName)}.\r\n\r\n"
-            + $"It contains {DiagnosticsBundle.Contents}: Piper's own messages and a summary of this "
-            + "machine. No captured requests, responses, cookies, certificates or proxy settings are "
-            + "included, but read it before sending it on.",
+            + $"It contains {DiagnosticsBundle.Contents}: Piper's own log messages and a summary of "
+            + "this machine. No captured requests, responses, bodies, cookies or certificates are "
+            + "included, and nothing is uploaded.\r\n\r\n"
+            + "The log can still name hosts you have filtered, AutoResponder rules you have written "
+            + "and files you have opened, so read it before sending it on.",
             "Diagnostics saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
