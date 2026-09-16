@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows.Forms;
 using Piper.App.Theme;
 using Piper.Core.Sessions;
+using Piper.Core.Telemetry;
 using Piper.Core.Text;
 
 namespace Piper.App;
@@ -217,6 +218,7 @@ public sealed class TextWizardDialog : Form
     /// </summary>
     public static void Open(IWin32Window? owner, string? input = null)
     {
+        Analytics.Track(AnalyticsEvents.FeatureUsed, (AnalyticsProperties.Feature, "textwizard"));
         if (_open is null || _open.IsDisposed)
         {
             var wizard = new TextWizardDialog();

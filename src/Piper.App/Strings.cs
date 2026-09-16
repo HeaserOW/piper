@@ -274,6 +274,13 @@ internal static class Strings
     /// <summary>Lines written to the Log tab.</summary>
     public static class Log
     {
+        public static string AnalyticsOn => I18n.T("log.analyticsOn");
+        public static string AnalyticsOff => I18n.T("log.analyticsOff");
+        public static string AnalyticsOffIdentifierKept => I18n.T("log.analyticsOffIdentifierKept");
+        public static string AnalyticsUnavailable => I18n.T("log.analyticsUnavailable");
+        public static string AnalyticsConsentOn => I18n.T("log.analyticsConsentOn");
+        public static string AnalyticsConsentOff => I18n.T("log.analyticsConsentOff");
+
         public static string RootCaPath(string path) => I18n.T("log.rootCaPath", ("path", path));
         public static string RootCaTrusted => I18n.T("log.rootCaTrusted");
         public static string RootCaNotTrusted => I18n.T("log.rootCaNotTrusted");
@@ -838,9 +845,31 @@ internal static class Strings
 
     // ---------------------------------------------------------------- configurations
 
+    /// <summary>The one-time question about anonymous feedback.</summary>
+    public static class AnalyticsConsent
+    {
+        public static string Caption => I18n.T("analyticsConsent.caption");
+        public static string Heading => I18n.T("analyticsConsent.heading");
+        public static string Intro => I18n.T("analyticsConsent.intro");
+        public static string SentHeading => I18n.T("analyticsConsent.sentHeading");
+        public static string SentBullets => I18n.T("analyticsConsent.sentBullets");
+        public static string NeverHeading => I18n.T("analyticsConsent.neverHeading");
+        public static string NeverBullets => I18n.T("analyticsConsent.neverBullets");
+        public static string Notes => I18n.T("analyticsConsent.notes");
+        public static string ChangeLater => I18n.T("analyticsConsent.changeLater");
+        public static string Accept => I18n.T("analyticsConsent.accept");
+        public static string Decline => I18n.T("analyticsConsent.decline");
+    }
+
     public static class Configurations
     {
         public static string Caption => I18n.T("configurations.caption");
+        public static string PrivacyTab => I18n.T("configurations.privacyTab");
+        public static string AnalyticsEnabled => I18n.T("configurations.analyticsEnabled");
+        public static string AnalyticsEnabledNote => I18n.T("configurations.analyticsEnabledNote");
+        public static string PendingFeedback => I18n.T("configurations.pendingFeedback");
+        public static string PendingFeedbackNote => I18n.T("configurations.pendingFeedbackNote");
+        public static string OpenReportsFolder => I18n.T("configurations.openReportsFolder");
         public static string GeneralTab => I18n.T("configurations.generalTab");
         public static string HttpsTab => I18n.T("configurations.httpsTab");
 

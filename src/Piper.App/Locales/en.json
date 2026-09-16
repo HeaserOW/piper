@@ -213,6 +213,13 @@
     "rootsRemoved_other": "Removed {{count}} Piper root certificates from the trusted roots.",
     "rootExported": "Root certificate exported to {{path}}.",
 
+    "analyticsConsentOn": "Anonymous feedback is on. Turn it off under Tools > Configurations > Privacy.",
+    "analyticsConsentOff": "Anonymous feedback is off. Turn it on under Tools > Configurations > Privacy.",
+    "analyticsOn": "Anonymous feedback is on.",
+    "analyticsOff": "Anonymous feedback is off. The identifiers and any pending reports were discarded.",
+    "analyticsOffIdentifierKept": "Anonymous feedback is off and nothing more will be collected, but the stored identifier could not be removed.",
+    "analyticsUnavailable": "Anonymous feedback could not be changed: reporting failed to start for this session.",
+
     "globalUserAgentCleared": "Global User-Agent override cleared.",
     "globalUserAgentSet": "Global User-Agent rule set to {{name}}.",
 
@@ -660,6 +667,7 @@
     "caption": "Configurations",
     "generalTab": "General",
     "httpsTab": "HTTPS",
+    "privacyTab": "Privacy",
 
     "savedForFutureSessions": "These settings are saved for future Piper sessions.",
     "captureOnStartup": "Start capturing when Piper opens",
@@ -687,7 +695,13 @@
     "trustRoot": "Trust root certificate...",
     "removeTrustedRoot": "Remove trusted root",
     "exportRoot": "Export root certificate...",
-    "openCertificateFolder": "Open certificate folder"
+    "openCertificateFolder": "Open certificate folder",
+
+    "analyticsEnabled": "Send anonymous feedback",
+    "analyticsEnabledNote": "Sends which features you use, the type of any error, and the app version, tied only to a random ID stored on this machine, over HTTPS to analyticsnew.overwolf.com. Sending is a web request, so it reveals your IP address and when you used Piper. Never sends captured traffic, URLs, hostnames, headers, bodies, cookies, certificates, or your settings. Turning this off also deletes the identifiers it reports with and discards anything not yet sent.",
+    "pendingFeedback": "Pending feedback",
+    "pendingFeedbackNote": "Reports wait in a plain text file you can read before they are sent.",
+    "openReportsFolder": "Open reports folder"
   },
 
   "hosts": {
@@ -696,6 +710,24 @@
     "example": "# Destination (IP/host)    Requested host\nwww.example.com    www.example2.io\n# Lines from a Windows hosts file (IP followed by host names) are also supported.",
     "importWindowsHostsFile": "Import Windows Hosts File",
     "importFailed": "Piper could not read the Windows hosts file:\n{{path}}\n\n{{message}}"
+  },
+
+  "analyticsConsent": {
+    "caption": "Help improve Piper",
+    "heading": "Would you like to send anonymous feedback?",
+    "intro": "Piper is easier to improve when we can see which features get used and what breaks. This is entirely optional, and nothing is collected unless you choose to send it.",
+
+    "sentHeading": "What is sent",
+    "sentBullets": "\u2022  Which features you use, and how a capture or certificate step turned out\n\u2022  The type of any error, with the top few stack frames\n\u2022  Piper's version and your Windows version\n\u2022  A random ID stored on this machine, deleted if you turn this off\n\u2022  Sent over HTTPS to analyticsnew.overwolf.com, run by Overwolf",
+
+    "neverHeading": "What is never sent",
+    "neverBullets": "\u2022  Captured traffic of any kind - URLs, hostnames, headers, bodies, cookies\n\u2022  Credentials, certificates, or private keys\n\u2022  File paths, error messages, or anything you typed\n\u2022  Your settings, rules, or saved sessions",
+
+    "notes": "Piper's reporting can only send short words from a fixed list, so captured traffic cannot be included even by mistake. Reports wait in a plain text file you can read before they are sent.\n\n\"Anonymous\" means the reports carry nothing that identifies you. Sending them is still a web request, so it reveals your IP address and when you were using Piper, the same as visiting a website would.",
+    "changeLater": "You can change this at any time under Tools > Configurations > Privacy.",
+
+    "accept": "Send anonymous feedback",
+    "decline": "No thanks"
   },
 
   "textWizard": {

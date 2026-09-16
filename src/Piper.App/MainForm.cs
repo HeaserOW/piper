@@ -9,12 +9,15 @@ using Piper.App.Theme;
 using Piper.Core.Proxy;
 using Piper.Core.Security;
 using Piper.Core.Sessions;
+using Piper.Core.Telemetry;
 
 namespace Piper.App;
 
 public sealed class MainForm : Form, IMessageFilter
 {
     private readonly SessionStore _store = new();
+    private bool _reportedFirstSession;
+    private int _lastScannedSessionCount;
     private readonly ProxyOptions _options = new();
     private readonly CertificateAuthority _ca;
     private readonly ProxyServer _proxy;
@@ -283,6 +286,8 @@ public sealed class MainForm : Form, IMessageFilter
         if (SystemProxy.RestoreLeftovers() is { } leftover)
             AppendLog(Strings.Log.RestoredLeftoverProxy(leftover));
 
+        AskAnalyticsConsentIfNeeded();
+
         if (!EnsureTrustedRootForStartup())
         {
             UpdateCaptureStatus();
@@ -312,6 +317,41 @@ public sealed class MainForm : Form, IMessageFilter
     }
 
     /// <summary>
+    /// Asks, once, whether the user wants to send anonymous feedback. Collection is opt-in and stays
+    /// off unless they say yes here or turn it on later, so declining - or dismissing the dialog
+    /// without reading it - leaves Piper gathering nothing.
+    /// </summary>
+    private void AskAnalyticsConsentIfNeeded()
+    {
+        // A reporting subsystem that failed to start collects nothing, so there is nothing to ask
+        // about - and without this the dialog would return on every launch with no way to settle it.
+        if (Analytics.SpoolPath is null || Analytics.NoticeShown) return;
+
+        bool optedIn;
+        using (var dialog = new AnalyticsConsentDialog())
+        {
+            // The dialog result is the answer: only the accept button yields OK, so Escape, the
+            // window's X and the decline button all arrive here as a refusal rather than as an
+            // unanswered question, and are recorded as such below.
+            dialog.ShowDialog(this);
+            optedIn = dialog.AnalyticsEnabled;
+        }
+
+        Analytics.SetEnabled(optedIn);
+        if (optedIn)
+        {
+            // Startup already tried to record this and was correctly refused, reporting being off
+            // at the time. Without replaying it the run in which someone opts in is the one run
+            // missing the first step of its own funnel.
+            Analytics.Track(AnalyticsEvents.AppStarted);
+        }
+
+        // Recorded either way: the question is asked once, not repeated until the answer is yes.
+        Analytics.RecordNoticeShown(CurrentVersion.ToString(3));
+        AppendLog(optedIn ? Strings.Log.AnalyticsConsentOn : Strings.Log.AnalyticsConsentOff);
+    }
+
+    /// <summary>
     /// Gives the user an explicit startup choice before enabling capture. Trust installation
     /// changes Windows' certificate store, so it must never happen silently.
     /// </summary>
@@ -338,6 +378,34 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
+        }
+        catch (Exception ex)
+        {
+            AppendLog(Strings.Log.TrustRootFailed(ex.Message));
+            MessageBox.Show(this,
+                Strings.Certificates.StartupInstallFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
+
+        // Outside the try above, because the certificate is already in the store by this point.
+        // Reporting failing here must not be reported to the user as the trust install failing, and
+        // must not skip the restart the installed certificate now requires.
+        try
+        {
+            Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "startup"));
+
+            // Restarting ends the process without running the shutdown flush, and the timer has not
+            // ticked this early in the run, so the event above only survives if it is written now.
+            Analytics.FlushToDisk();
+        }
+        catch (Exception reportingFailure)
+        {
+            Debug.WriteLine($"Analytics failed on the trust path: {reportingFailure.GetType().Name}");
+        }
+
+        try
+        {
             AppendLog(Strings.Log.RootTrusted(_ca.RootCertificate.Thumbprint));
             _closeAfterShutdown = true;
             Application.Restart();
@@ -674,8 +742,9 @@ public sealed class MainForm : Form, IMessageFilter
     private void ShowConfigurations()
     {
         using var dialog = new ConfigurationsDialog(_options, _captureEnabledOnStartup, _captureScope.ToString(),
-            FontScale.WheelEnabled,
-            TrustRootCertificate, UntrustRootCertificate, ExportRootCertificate, OpenCertificateFolder);
+            FontScale.WheelEnabled, Analytics.IsEnabled,
+            TrustRootCertificate, UntrustRootCertificate, ExportRootCertificate, OpenCertificateFolder,
+            OpenAnalyticsFolder);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         dialog.ApplyTo(_options);
@@ -690,6 +759,25 @@ public sealed class MainForm : Form, IMessageFilter
         ProxyConfigurationSettingsStore.Save(ProxyConfigurationSettings.From(_options));
         FontScale.WheelEnabled = dialog.WheelZoom;
         SaveFontScaleSettings();
+        if (dialog.AnalyticsEnabled != Analytics.IsEnabled)
+        {
+            var forgotten = Analytics.SetEnabled(dialog.AnalyticsEnabled);
+
+            // Replayed for the same reason the consent dialog replays it: startup recorded this and
+            // was correctly refused while reporting was off, so without it a run where someone opts
+            // in from here is missing the first step of its own funnel. Reporting it more than once
+            // per run is prevented by the client, not by this call site.
+            if (dialog.AnalyticsEnabled) Analytics.Track(AnalyticsEvents.AppStarted);
+
+            // Reporting that failed to start cannot be switched on, and SetEnabled is a no-op then.
+            // Logging success regardless would tell the user the opposite of the truth about a
+            // privacy control, and the setting would be back to its old value next time they look.
+            AppendLog(Analytics.SpoolPath is null ? Strings.Log.AnalyticsUnavailable
+                : dialog.AnalyticsEnabled ? Strings.Log.AnalyticsOn
+                : forgotten ? Strings.Log.AnalyticsOff
+                : Strings.Log.AnalyticsOffIdentifierKept);
+        }
+
         AppendLog(Strings.Log.ConfigurationsSaved);
         if (!_options.ValidateUpstreamCertificates)
             AppendLog(Strings.Log.UpstreamValidationOffAfterSave);
@@ -697,6 +785,7 @@ public sealed class MainForm : Form, IMessageFilter
 
     private void ShowHosts()
     {
+        Analytics.Track(AnalyticsEvents.FeatureUsed, (AnalyticsProperties.Feature, "hosts"));
         using var dialog = new HostsDialog(_options.HostRemapping.Export());
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -705,6 +794,24 @@ public sealed class MainForm : Form, IMessageFilter
         AppendLog(_options.HostRemapping.Enabled
             ? Strings.Log.HostRemappingEnabled
             : Strings.Log.HostRemappingDisabled);
+    }
+
+    /// <summary>
+    /// Opens the folder holding the pending-report file, so "here is what we send" is something the
+    /// user can check rather than something they have to believe.
+    /// </summary>
+    private void OpenAnalyticsFolder()
+    {
+        var folder = AnalyticsSettingsStore.DefaultSpoolDirectory;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private void OpenCertificateFolder()
@@ -771,6 +878,11 @@ public sealed class MainForm : Form, IMessageFilter
                 foreach (var session in result.Sessions) _store.Add(session);
             }
 
+            Analytics.Track(
+                AnalyticsEvents.FeatureUsed,
+                (AnalyticsProperties.Feature, "session_import"),
+                (AnalyticsProperties.Format, isComposerImport ? "raz" : "saz"),
+                (AnalyticsProperties.Count, Analytics.CountBucket(result.Sessions.Count)));
             AppendLog(Strings.Log.ImportedSessions(result.Sessions.Count, Path.GetFileName(path), isComposerImport));
             foreach (var warning in result.Warnings)
                 AppendLog(Strings.Log.SazImportWarning(Path.GetFileName(path), warning));
@@ -1087,9 +1199,11 @@ public sealed class MainForm : Form, IMessageFilter
         {
             _proxy.Start();
             UpdateCaptureStatus();
+            Analytics.Track(AnalyticsEvents.CaptureStarted, (AnalyticsProperties.Result, "ok"));
         }
         catch (Exception ex)
         {
+            Analytics.TrackError("capture_start", ex);
             // Reported in the log and the status bar rather than a dialog, so a busy port
             // never blocks the UI and the full exception stays available for diagnosis.
             AppendLog(Strings.Log.ListenFailed(_options.Port, ex.GetType().Name, ex.Message));
@@ -1274,6 +1388,7 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
+            Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "manual"));
             AppendLog(Strings.Log.RootTrusted(_ca.RootCertificate.Thumbprint));
         }
         catch (Exception ex)
@@ -1646,6 +1761,27 @@ public sealed class MainForm : Form, IMessageFilter
     private void UpdateSessionsStatus()
     {
         var total = _store.Count;
+        // Reporting is checked before the scan, not after: a user who declined should not pay for
+        // copying the session store, and the latch must not close while reporting is off - otherwise
+        // someone who opts in mid-run could never report this step for the rest of the run. The
+        // count is checked too, so the scan runs only when a session has arrived since the last one,
+        // rather than on every status update during the window before real traffic appears.
+        if (total > _lastScannedSessionCount && !_reportedFirstSession && Analytics.IsEnabled
+            && _store.Snapshot().Any(session => !session.IsUpdateCheck))
+        {
+            // Completes the activation funnel: installed, trusted, capturing, and now actually
+            // seeing traffic. Reported once per run, and only ever as the fact that it happened.
+            //
+            // Piper's own startup update check lands in the session store like anything else, so a
+            // bare count is not evidence that capture works - it fires on every run, even with
+            // capture off and the certificate untrusted, which would make the funnel read as if
+            // every user succeeded.
+            _reportedFirstSession = true;
+            Analytics.Track(AnalyticsEvents.FirstSessionCaptured);
+        }
+
+        _lastScannedSessionCount = total;
+
         var selected = _sessionList.SelectedSessionCount;
         _sessionsLabel.Text = selected == 0
             ? Strings.StatusBar.Sessions(total)

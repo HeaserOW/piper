@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text;
 using System.Windows.Forms;
+using Piper.Core.Telemetry;
 
 namespace Piper.App;
 
@@ -35,15 +37,63 @@ internal static class Program
             return;
         }
 
-        using var form = new MainForm();
-        using var relay = new SazFileRelay(files =>
+        // Only the instance that owns the window reports. A launch that exists solely to hand a
+        // .saz file to the running Piper and exit is not a session and must not look like one.
+        StartAnalytics();
+
+        try
         {
-            if (form.IsDisposed || files.Count == 0) return;
-            try { form.BeginInvoke(() => form.ImportSazFiles(files)); }
-            catch (InvalidOperationException) { }
-        });
-        form.Shown += (_, _) => form.ImportSazFiles(startupFiles);
-        Application.Run(form);
+            using var form = new MainForm();
+            using var relay = new SazFileRelay(files =>
+            {
+                if (form.IsDisposed || files.Count == 0) return;
+                try { form.BeginInvoke(() => form.ImportSazFiles(files)); }
+                catch (InvalidOperationException) { }
+            });
+            form.Shown += (_, _) => form.ImportSazFiles(startupFiles);
+            Application.Run(form);
+        }
+        finally
+        {
+            // Guarded for the same reason StartAnalytics is. Shutdown drains the spool, and neither
+            // it nor Dispose filters for everything a path can throw, so without this a failure to
+            // write reports on the way out costs the user a crash as they close the window rather
+            // than a missing report.
+            try
+            {
+                Analytics.Shutdown();
+            }
+            catch (Exception shutdownFailure)
+            {
+                Debug.WriteLine($"Analytics failed to shut down: {shutdownFailure.GetType().Name}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Brings up reporting. Deliberately total: a failure here must cost the user nothing, because
+    /// analytics are the least important thing this process does.
+    /// </summary>
+    private static void StartAnalytics()
+    {
+        try
+        {
+            var settings = AnalyticsSettingsStore.Load() ?? new AnalyticsSettings();
+            var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+            Analytics.Initialize(new AnalyticsClient(
+                settings, version,
+                machineId: MachineIdStore.GetOrCreate,
+                forgetMachineId: MachineIdStore.Delete));
+            Analytics.Track(AnalyticsEvents.AppStarted);
+        }
+        catch (Exception ex)
+        {
+            // Total on purpose, matching the summary above: the filter used to name three exception
+            // types, so anything else - a malformed path, a type initialiser failing while the
+            // allowlists are built - escaped into Main and cost the user the launch because
+            // reporting failed to start. There is no window to log to yet.
+            Debug.WriteLine($"Analytics failed to start: {ex.GetType().Name}");
+        }
     }
 
     private static bool _ownsSystemProxy;
@@ -80,6 +130,22 @@ internal static class Program
                 + $"{exception.StackTrace}{Environment.NewLine}{new string('-', 70)}{Environment.NewLine}");
         }
         catch (IOException) { /* nothing useful to do if even logging fails */ }
+
+        // The type and frames only - never the message, which routinely carries the URL that was
+        // being processed. Written synchronously because the dialog below blocks until the user
+        // dismisses it and the process may not survive to the next flush.
+        // Guarded as a whole: this runs inside the unhandled-exception handler, so anything thrown
+        // here would escape it and take the dialog below with it. A missing report is a far smaller
+        // loss than a crash the user never sees.
+        try
+        {
+            Analytics.TrackError("unhandled", exception, fatal: true);
+            Analytics.FlushToDisk();
+        }
+        catch (Exception reportingFailure)
+        {
+            Debug.WriteLine($"Analytics failed on the crash path: {reportingFailure.GetType().Name}");
+        }
 
         MessageBox.Show(
             Strings.App.CrashReport(exception.GetType().Name, exception.Message, exception.StackTrace),

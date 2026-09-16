@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Windows.Forms;
 using Piper.App.Theme;
 using Piper.Core.Sessions;
+using Piper.Core.Telemetry;
 
 namespace Piper.App.Controls;
 
@@ -277,6 +278,8 @@ public sealed class SessionListView : UserControl
     public void ShowFindSessions()
     {
         if (FindSessionsDialog.Prompt(FindForm(), _lastFind) is not { } request) return;
+
+        Analytics.Track(AnalyticsEvents.FeatureUsed, (AnalyticsProperties.Feature, "find"));
 
         _lastFind = request;
         _findQuery = SearchQuery.Parse(request.Query, request.Scope);
@@ -812,6 +815,11 @@ public sealed class SessionListView : UserControl
         try
         {
             SazExporter.Export(dialog.FileName, sessions);
+            Analytics.Track(
+                AnalyticsEvents.FeatureUsed,
+                (AnalyticsProperties.Feature, "session_export"),
+                (AnalyticsProperties.Format, "saz"),
+                (AnalyticsProperties.Count, Analytics.CountBucket(sessions.Length)));
             return true;
         }
         catch (Exception ex)
