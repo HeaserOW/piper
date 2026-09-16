@@ -31,14 +31,14 @@ public sealed class FindSessionsDialog : Form
     /// </summary>
     private static readonly (string Name, Color? Colour)[] MarkColours =
     [
-        ("Yellow", Color.FromArgb(250, 226, 60)),
-        ("Orange", Color.FromArgb(252, 190, 110)),
-        ("Red", Color.FromArgb(250, 155, 150)),
-        ("Green", Color.FromArgb(150, 219, 150)),
-        ("Blue", Color.FromArgb(150, 200, 245)),
-        ("Purple", Color.FromArgb(205, 175, 240)),
-        ("Gray", Color.FromArgb(198, 198, 204)),
-        ("No highlight - remove marks", null),
+        (Strings.FindSessions.Yellow, Color.FromArgb(250, 226, 60)),
+        (Strings.FindSessions.Orange, Color.FromArgb(252, 190, 110)),
+        (Strings.FindSessions.Red, Color.FromArgb(250, 155, 150)),
+        (Strings.FindSessions.Green, Color.FromArgb(150, 219, 150)),
+        (Strings.FindSessions.Blue, Color.FromArgb(150, 200, 245)),
+        (Strings.FindSessions.Purple, Color.FromArgb(205, 175, 240)),
+        (Strings.FindSessions.Gray, Color.FromArgb(198, 198, 204)),
+        (Strings.FindSessions.NoHighlight, null),
     ];
 
     private readonly TextBox _query;
@@ -59,7 +59,7 @@ public sealed class FindSessionsDialog : Form
     {
         ArgumentNullException.ThrowIfNull(previous);
 
-        Text = "Find Sessions";
+        Text = Strings.FindSessions.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
@@ -98,7 +98,7 @@ public sealed class FindSessionsDialog : Form
 
         _selectMatches = new CheckBox
         {
-            Text = "Select matching sessions",
+            Text = Strings.FindSessions.SelectMatches,
             Checked = previous.SelectMatches,
             AutoSize = true,
             Margin = new Padding(0, 8, 0, 0),
@@ -114,11 +114,11 @@ public sealed class FindSessionsDialog : Form
         };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.Controls.Add(RowLabel("&Find:"), 0, 0);
+        panel.Controls.Add(RowLabel(Strings.FindSessions.FindLabel), 0, 0);
         panel.Controls.Add(_query, 1, 0);
-        panel.Controls.Add(RowLabel("&Search:"), 0, 1);
+        panel.Controls.Add(RowLabel(Strings.FindSessions.SearchLabel), 0, 1);
         panel.Controls.Add(_scope, 1, 1);
-        panel.Controls.Add(RowLabel("&Mark matches with:"), 0, 2);
+        panel.Controls.Add(RowLabel(Strings.FindSessions.MarkLabel), 0, 2);
         panel.Controls.Add(_highlight, 1, 2);
         panel.Controls.Add(_selectMatches, 1, 3);
 
@@ -127,22 +127,21 @@ public sealed class FindSessionsDialog : Form
             AutoSize = true,
             ForeColor = Palette.TextDim,
             Margin = new Padding(0, 12, 0, 0),
-            Text = "The filter box grammar works here too - status:4xx, host:api, \"exact phrase\", /regex/ -"
-                + "\r\nand matching ignores case. Marks stay until a later find or Clear find marks removes them.",
+            Text = Strings.FindSessions.Hint,
         };
         panel.Controls.Add(hint, 0, 4);
         panel.SetColumnSpan(hint, 2);
 
         var find = new Button
         {
-            Text = "Find Sessions",
+            Text = Strings.FindSessions.FindButton,
             DialogResult = DialogResult.OK,
             Size = new Size(130, 34),
             Enabled = previous.Query.Trim().Length > 0,
         };
         var cancel = new Button
         {
-            Text = "Cancel",
+            Text = Strings.Common.Cancel,
             DialogResult = DialogResult.Cancel,
             Size = new Size(100, 34),
         };

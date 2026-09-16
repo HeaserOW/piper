@@ -105,8 +105,8 @@ public sealed class MessageInspector : UserControl
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
             Font = Palette.Mono,
         };
-        _headersView.Columns.Add("Name", 210);
-        _headersView.Columns.Add("Value", 460);
+        _headersView.Columns.Add(Strings.Inspector.ColumnName, 210);
+        _headersView.Columns.Add(Strings.Inspector.ColumnValue, 460);
         DarkListView.Attach(_headersView);
         DarkListView.AddFillerColumn(_headersView);
         _headersView.MouseDown += OnHeadersMouseDown;
@@ -123,7 +123,7 @@ public sealed class MessageInspector : UserControl
         _headersSearch = new TextBox
         {
             Dock = DockStyle.Fill,
-            PlaceholderText = "Search headers",
+            PlaceholderText = Strings.Inspector.SearchHeaders,
             Font = Palette.Mono,
         };
         _headersSearch.TextChanged += (_, _) => RenderHeaders();
@@ -169,7 +169,7 @@ public sealed class MessageInspector : UserControl
         _hexSearch = new TextBox
         {
             Dock = DockStyle.Fill,
-            PlaceholderText = "Find text or bytes",
+            PlaceholderText = Strings.Inspector.FindTextOrBytes,
             Font = Palette.Mono,
         };
         _hexSearch.KeyDown += OnHexSearchKeyDown;
@@ -177,7 +177,7 @@ public sealed class MessageInspector : UserControl
         {
             Dock = DockStyle.Right,
             Width = 52,
-            Text = "Hex",
+            Text = Strings.Inspector.HexToggle,
             TextAlign = ContentAlignment.MiddleCenter,
         };
         _hexSearchStatus = new Label
@@ -188,9 +188,9 @@ public sealed class MessageInspector : UserControl
             ForeColor = Palette.TextDim,
             Padding = new Padding(0, 3, 5, 0),
         };
-        var previousHexMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = "\u25c0", TabStop = false };
+        var previousHexMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = Strings.Inspector.PreviousMatch, TabStop = false };
         previousHexMatch.Click += (_, _) => FindHex(-1);
-        var nextHexMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = "\u25b6", TabStop = false };
+        var nextHexMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = Strings.Inspector.NextMatch, TabStop = false };
         nextHexMatch.Click += (_, _) => FindHex(1);
         var hexSearchRow = new Panel { Dock = DockStyle.Bottom, Height = 28, Padding = new Padding(2) };
         hexSearchRow.Controls.Add(_hexSearch);
@@ -205,7 +205,7 @@ public sealed class MessageInspector : UserControl
         _jsonSearch = new TextBox
         {
             Dock = DockStyle.Fill,
-            PlaceholderText = "Search JSON",
+            PlaceholderText = Strings.Inspector.SearchJson,
             Font = Palette.Mono,
         };
         _jsonSearch.TextChanged += (_, _) => FindJsonMatches();
@@ -220,9 +220,9 @@ public sealed class MessageInspector : UserControl
             Padding = new Padding(0, 3, 5, 0),
         };
 
-        var previousMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = "\u25c0", TabStop = false };
+        var previousMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = Strings.Inspector.PreviousMatch, TabStop = false };
         previousMatch.Click += (_, _) => SelectJsonMatch(-1);
-        var nextMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = "\u25b6", TabStop = false };
+        var nextMatch = new Button { Dock = DockStyle.Right, Width = 30, Text = Strings.Inspector.NextMatch, TabStop = false };
         nextMatch.Click += (_, _) => SelectJsonMatch(1);
 
         var jsonSearchRow = new Panel { Dock = DockStyle.Bottom, Height = 28, Padding = new Padding(2) };
@@ -249,7 +249,7 @@ public sealed class MessageInspector : UserControl
         };
         _jsonTryAnyway = new Button
         {
-            Text = "Force",
+            Text = Strings.Inspector.Force,
         };
         _jsonTryAnyway.Click += (_, _) => TryRenderJson();
         _jsonForcePanel = BuildForcePanel(_jsonTryAnyway);
@@ -273,10 +273,10 @@ public sealed class MessageInspector : UserControl
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
                 Font = Palette.Mono,
             };
-            _webFormsView.Columns.Add("Source", 70);
-            _webFormsView.Columns.Add("Name", 180);
-            _webFormsView.Columns.Add("Value", 420);
-            _webFormsView.Columns.Add("Content-Type", 160);
+            _webFormsView.Columns.Add(Strings.Inspector.ColumnSource, 70);
+            _webFormsView.Columns.Add(Strings.Inspector.ColumnName, 180);
+            _webFormsView.Columns.Add(Strings.Inspector.ColumnValue, 420);
+            _webFormsView.Columns.Add(Strings.Inspector.ColumnContentType, 160);
             DarkListView.Attach(_webFormsView);
             DarkListView.AddFillerColumn(_webFormsView);
             _webFormsView.ContextMenuStrip = BuildWebFormsMenu();
@@ -314,7 +314,7 @@ public sealed class MessageInspector : UserControl
             };
             _imageTryAnyway = new Button
             {
-                Text = "Force",
+                Text = Strings.Inspector.Force,
             };
             _imageTryAnyway.Click += (_, _) => TryRenderImage();
             _imageForcePanel = BuildForcePanel(_imageTryAnyway);
@@ -336,7 +336,7 @@ public sealed class MessageInspector : UserControl
             };
             _videoTryAnyway = new Button
             {
-                Text = "Force",
+                Text = Strings.Inspector.Force,
             };
             _videoTryAnyway.Click += (_, _) => TryRenderVideo();
             _videoForcePanel = BuildForcePanel(_videoTryAnyway);
@@ -344,18 +344,18 @@ public sealed class MessageInspector : UserControl
         }
 
         _tabs = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
-        _tabs.TabPages.Add(NewPage("Headers", headersPanel));
-        _tabs.TabPages.Add(NewPage("Body", _bodyView));
-        _tabs.TabPages.Add(NewPage("Raw", _rawView));
-        _tabs.TabPages.Add(NewPage("Hex", hexPanel));
-        _tabs.TabPages.Add(NewPage("JSON", jsonPanel));
+        _tabs.TabPages.Add(NewPage(Strings.Inspector.TabHeaders, headersPanel));
+        _tabs.TabPages.Add(NewPage(Strings.Inspector.TabBody, _bodyView));
+        _tabs.TabPages.Add(NewPage(Strings.Inspector.TabRaw, _rawView));
+        _tabs.TabPages.Add(NewPage(Strings.Inspector.TabHex, hexPanel));
+        _tabs.TabPages.Add(NewPage(Strings.Inspector.TabJson, jsonPanel));
         if (_webFormsView is not null && _webFormsStatus is not null)
         {
             var webFormsPanel = new Panel { Dock = DockStyle.Fill };
             webFormsPanel.Controls.Add(_webFormsView);
             webFormsPanel.Controls.Add(_webFormsStatus);
             _webFormsTabIndex = _tabs.TabPages.Count;
-            _tabs.TabPages.Add(NewPage("WebForms", webFormsPanel));
+            _tabs.TabPages.Add(NewPage(Strings.Inspector.TabWebForms, webFormsPanel));
         }
         if (_imageView is not null && _imageStatus is not null)
         {
@@ -367,7 +367,7 @@ public sealed class MessageInspector : UserControl
             imagePanel.Controls.Add(imageStatusPanel);
             imagePanel.Controls.Add(BuildImageToolbar());
             EnableMediaDrop(imagePanel, imageTabIndex: 5);
-            _tabs.TabPages.Add(NewPage("Image", imagePanel));
+            _tabs.TabPages.Add(NewPage(Strings.Inspector.TabImage, imagePanel));
         }
         if (_videoView is not null && _videoStatus is not null)
         {
@@ -378,7 +378,7 @@ public sealed class MessageInspector : UserControl
             videoPanel.Controls.Add(_videoView);
             videoPanel.Controls.Add(videoStatusPanel);
             EnableMediaDrop(videoPanel, imageTabIndex: 6);
-            _tabs.TabPages.Add(NewPage("Video", videoPanel));
+            _tabs.TabPages.Add(NewPage(Strings.Inspector.TabVideo, videoPanel));
         }
         _tabs.SelectedIndexChanged += (_, _) => RenderSelectedTab();
         if (_showImageViewer)
@@ -430,11 +430,11 @@ public sealed class MessageInspector : UserControl
     private ContextMenuStrip BuildHeadersMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var copyHeader = new ToolStripMenuItem("Copy entire header", null, (_, _) => CopySelectedHeader(valueOnly: false));
-        var copyValue = new ToolStripMenuItem("Copy value only", null, (_, _) => CopySelectedHeader(valueOnly: true));
-        var openInBrowser = new ToolStripMenuItem("Open with default browser", null,
+        var copyHeader = new ToolStripMenuItem(Strings.Inspector.CopyEntireHeader, null, (_, _) => CopySelectedHeader(valueOnly: false));
+        var copyValue = new ToolStripMenuItem(Strings.Inspector.CopyValueOnly, null, (_, _) => CopySelectedHeader(valueOnly: true));
+        var openInBrowser = new ToolStripMenuItem(Strings.Inspector.OpenWithDefaultBrowser, null,
             (_, _) => OpenInDefaultBrowser(SelectedHeader?.Value));
-        var textWizard = new ToolStripMenuItem("Send value to TextWizard", null,
+        var textWizard = new ToolStripMenuItem(Strings.Inspector.SendValueToTextWizard, null,
             (_, _) => SendToTextWizard(SelectedHeader?.Value));
         menu.Items.AddRange([copyHeader, copyValue, new ToolStripSeparator(), openInBrowser, textWizard]);
         menu.Opening += (_, _) =>
@@ -452,11 +452,11 @@ public sealed class MessageInspector : UserControl
     private ContextMenuStrip BuildJsonMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var copyPair = new ToolStripMenuItem("Copy key-value", null, (_, _) => CopySelectedJson(valueOnly: false));
-        var copyValue = new ToolStripMenuItem("Copy value only", null, (_, _) => CopySelectedJson(valueOnly: true));
-        var openInBrowser = new ToolStripMenuItem("Open with default browser", null,
+        var copyPair = new ToolStripMenuItem(Strings.Inspector.CopyKeyValue, null, (_, _) => CopySelectedJson(valueOnly: false));
+        var copyValue = new ToolStripMenuItem(Strings.Inspector.CopyValueOnly, null, (_, _) => CopySelectedJson(valueOnly: true));
+        var openInBrowser = new ToolStripMenuItem(Strings.Inspector.OpenWithDefaultBrowser, null,
             (_, _) => OpenInDefaultBrowser(SelectedJsonValue?.StringValue));
-        var textWizard = new ToolStripMenuItem("Send value to TextWizard", null,
+        var textWizard = new ToolStripMenuItem(Strings.Inspector.SendValueToTextWizard, null,
             (_, _) => SendToTextWizard(SelectedJsonValue is { } selected ? selected.StringValue ?? selected.RawValue : null));
         menu.Items.AddRange([copyPair, copyValue, new ToolStripSeparator(), openInBrowser, textWizard]);
         menu.Opening += (_, _) =>
@@ -474,11 +474,11 @@ public sealed class MessageInspector : UserControl
     private ContextMenuStrip BuildWebFormsMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var copyNameValue = new ToolStripMenuItem("Copy Name-Value", null, (_, _) => CopySelectedWebForm(valueOnly: false));
-        var copyValue = new ToolStripMenuItem("Copy Value", null, (_, _) => CopySelectedWebForm(valueOnly: true));
-        var save = new ToolStripMenuItem("Save binary data...", null, (_, _) => SaveSelectedWebFormBinary());
-        var viewHex = new ToolStripMenuItem("View in Hex...", null, (_, _) => ViewSelectedWebFormBinaryAsHex());
-        var textWizard = new ToolStripMenuItem("Send value to TextWizard", null,
+        var copyNameValue = new ToolStripMenuItem(Strings.Inspector.CopyNameValue, null, (_, _) => CopySelectedWebForm(valueOnly: false));
+        var copyValue = new ToolStripMenuItem(Strings.Inspector.CopyValue, null, (_, _) => CopySelectedWebForm(valueOnly: true));
+        var save = new ToolStripMenuItem(Strings.Inspector.SaveBinaryData, null, (_, _) => SaveSelectedWebFormBinary());
+        var viewHex = new ToolStripMenuItem(Strings.Inspector.ViewInHex, null, (_, _) => ViewSelectedWebFormBinaryAsHex());
+        var textWizard = new ToolStripMenuItem(Strings.Inspector.SendValueToTextWizard, null,
             (_, _) => SendToTextWizard(SelectedWebFormField?.Value));
         menu.Items.AddRange([copyNameValue, copyValue, new ToolStripSeparator(), save, viewHex, textWizard]);
         menu.Opening += (_, _) =>
@@ -496,10 +496,10 @@ public sealed class MessageInspector : UserControl
     private ContextMenuStrip BuildHexMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var copy = new ToolStripMenuItem("Copy selection", null, (_, _) => _hexView.Copy());
-        var copyHex = new ToolStripMenuItem("Copy selection as hex", null, (_, _) => _hexView.CopyHex());
-        var selectAll = new ToolStripMenuItem("Select all", null, (_, _) => _hexView.SelectAll());
-        var find = new ToolStripMenuItem("Find", null, (_, _) => _hexSearch.Focus());
+        var copy = new ToolStripMenuItem(Strings.Inspector.CopySelection, null, (_, _) => _hexView.Copy());
+        var copyHex = new ToolStripMenuItem(Strings.Inspector.CopySelectionAsHex, null, (_, _) => _hexView.CopyHex());
+        var selectAll = new ToolStripMenuItem(Strings.Inspector.SelectAll, null, (_, _) => _hexView.SelectAll());
+        var find = new ToolStripMenuItem(Strings.Inspector.Find, null, (_, _) => _hexSearch.Focus());
         menu.Items.AddRange([copy, copyHex, new ToolStripSeparator(), selectAll, new ToolStripSeparator(), find]);
         menu.Opening += (_, _) =>
         {
@@ -514,14 +514,14 @@ public sealed class MessageInspector : UserControl
     private ContextMenuStrip BuildImageMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        menu.Items.Add("Zoom in", null, (_, _) => ChangeImageZoom(1.25f));
-        menu.Items.Add("Zoom out", null, (_, _) => ChangeImageZoom(0.8f));
-        menu.Items.Add("Actual size", null, (_, _) => ResetImageView());
+        menu.Items.Add(Strings.Inspector.ZoomIn, null, (_, _) => ChangeImageZoom(1.25f));
+        menu.Items.Add(Strings.Inspector.ZoomOut, null, (_, _) => ChangeImageZoom(0.8f));
+        menu.Items.Add(Strings.Inspector.ActualSize, null, (_, _) => ResetImageView());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Save as PNG...", null, (_, _) => SaveCurrentImage("png"));
-        menu.Items.Add("Save as JPEG...", null, (_, _) => SaveCurrentImage("jpg"));
-        menu.Items.Add("Save as WebP...", null, (_, _) => SaveCurrentImage("webp"));
-        menu.Items.Add("Save image as...", null, (_, _) => SaveCurrentImage(null));
+        menu.Items.Add(Strings.Inspector.SaveAsPng, null, (_, _) => SaveCurrentImage("png"));
+        menu.Items.Add(Strings.Inspector.SaveAsJpeg, null, (_, _) => SaveCurrentImage("jpg"));
+        menu.Items.Add(Strings.Inspector.SaveAsWebp, null, (_, _) => SaveCurrentImage("webp"));
+        menu.Items.Add(Strings.Inspector.SaveImageAs, null, (_, _) => SaveCurrentImage(null));
         return menu;
     }
 
@@ -583,36 +583,36 @@ public sealed class MessageInspector : UserControl
     /// <summary>Creates the visible counterpart to the image view's right-click actions.</summary>
     private ToolStrip BuildImageToolbar()
     {
-        var zoomIn = new ToolStripButton("Zoom +")
+        var zoomIn = new ToolStripButton(Strings.Inspector.ZoomInButton)
         {
             DisplayStyle = ToolStripItemDisplayStyle.Text,
-            ToolTipText = "Zoom in",
+            ToolTipText = Strings.Inspector.ZoomIn,
         };
         zoomIn.Click += (_, _) => ChangeImageZoom(1.25f);
 
-        var zoomOut = new ToolStripButton("Zoom -")
+        var zoomOut = new ToolStripButton(Strings.Inspector.ZoomOutButton)
         {
             DisplayStyle = ToolStripItemDisplayStyle.Text,
-            ToolTipText = "Zoom out",
+            ToolTipText = Strings.Inspector.ZoomOut,
         };
         zoomOut.Click += (_, _) => ChangeImageZoom(0.8f);
 
-        var actualSize = new ToolStripButton("100%")
+        var actualSize = new ToolStripButton(Strings.Inspector.ActualSizeButton)
         {
             DisplayStyle = ToolStripItemDisplayStyle.Text,
-            ToolTipText = "Actual size and reset pan",
+            ToolTipText = Strings.Inspector.ActualSizeTooltip,
         };
         actualSize.Click += (_, _) => ResetImageView();
 
-        var save = new ToolStripDropDownButton("Save")
+        var save = new ToolStripDropDownButton(Strings.Inspector.SaveImageMenu)
         {
             DisplayStyle = ToolStripItemDisplayStyle.Text,
-            ToolTipText = "Save or convert this image",
+            ToolTipText = Strings.Inspector.SaveImageTooltip,
         };
-        save.DropDownItems.Add("Save as PNG...", null, (_, _) => SaveCurrentImage("png"));
-        save.DropDownItems.Add("Save as JPEG...", null, (_, _) => SaveCurrentImage("jpg"));
-        save.DropDownItems.Add("Save as WebP...", null, (_, _) => SaveCurrentImage("webp"));
-        save.DropDownItems.Add("Save image as...", null, (_, _) => SaveCurrentImage(null));
+        save.DropDownItems.Add(Strings.Inspector.SaveAsPng, null, (_, _) => SaveCurrentImage("png"));
+        save.DropDownItems.Add(Strings.Inspector.SaveAsJpeg, null, (_, _) => SaveCurrentImage("jpg"));
+        save.DropDownItems.Add(Strings.Inspector.SaveAsWebp, null, (_, _) => SaveCurrentImage("webp"));
+        save.DropDownItems.Add(Strings.Inspector.SaveImageAs, null, (_, _) => SaveCurrentImage(null));
 
         var toolbar = new ToolStrip
         {
@@ -644,15 +644,15 @@ public sealed class MessageInspector : UserControl
 
         using var dialog = new SaveFileDialog
         {
-            Title = "Save image",
-            Filter = "PNG image (*.png)|*.png|JPEG image (*.jpg)|*.jpg|WebP image (*.webp)|*.webp",
+            Title = Strings.Inspector.SaveImageCaption,
+            Filter = Strings.Inspector.SaveImageFilter,
             FilterIndex = requestedFormat switch
             {
                 "jpg" => 2,
                 "webp" => 3,
                 _ => 1,
             },
-            FileName = $"response.{requestedFormat ?? "png"}",
+            FileName = Strings.Inspector.SaveImageFileName(requestedFormat ?? "png"),
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -671,8 +671,8 @@ public sealed class MessageInspector : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Could not save the image: {ex.Message}",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.Inspector.SaveImageFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -738,7 +738,7 @@ public sealed class MessageInspector : UserControl
             _headersView.EndUpdate();
         }
 
-        _headersMatchCount.Text = query.Length == 0 ? string.Empty : $"{visible.Count}/{_headers.Count}";
+        _headersMatchCount.Text = query.Length == 0 ? string.Empty : Strings.Inspector.HeaderMatchCount(visible.Count, _headers.Count);
     }
 
     private void OnJsonNodeMouseClick(object? sender, TreeNodeMouseClickEventArgs e)
@@ -917,9 +917,9 @@ public sealed class MessageInspector : UserControl
 
         using var dialog = new SaveFileDialog
         {
-            Title = "Save form field contents",
+            Title = Strings.Inspector.SaveFormFieldCaption,
             FileName = FileNameFor(field),
-            Filter = "All files (*.*)|*.*",
+            Filter = Strings.Common.AllFilesFilter,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -929,7 +929,7 @@ public sealed class MessageInspector : UserControl
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Could not save form field", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, ex.Message, Strings.Inspector.SaveFormFieldFailedCaption, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -940,7 +940,7 @@ public sealed class MessageInspector : UserControl
 
         using var dialog = new Form
         {
-            Text = $"Hex - {field.Name}",
+            Text = Strings.Inspector.HexViewerCaption(field.Name),
             StartPosition = FormStartPosition.CenterParent,
             ClientSize = new System.Drawing.Size(900, 600),
             MinimumSize = new System.Drawing.Size(500, 350),
@@ -975,7 +975,7 @@ public sealed class MessageInspector : UserControl
     {
         var name = field.FileName ?? field.Name;
         foreach (var character in Path.GetInvalidFileNameChars()) name = name.Replace(character, '_');
-        return string.IsNullOrWhiteSpace(name) ? "form-field.bin" : name;
+        return string.IsNullOrWhiteSpace(name) ? Strings.Inspector.FormFieldFallbackFileName : name;
     }
 
     private void RenderWebForms(HttpRequestData request)
@@ -997,12 +997,12 @@ public sealed class MessageInspector : UserControl
             }
 
             _webFormsStatus.Text = fields.Count == 0
-                ? "No query-string or supported HTML form fields in this request."
-                : $"{fields.Count:N0} request parameter(s)  ·  Query string, URL-encoded forms, and multipart forms are shown.";
+                ? Strings.Inspector.NoWebFormFields
+                : Strings.Inspector.WebFormFieldCount(fields.Count);
         }
         catch (Exception ex)
         {
-            _webFormsStatus.Text = $"Could not parse request parameters: {ex.Message}";
+            _webFormsStatus.Text = Strings.Inspector.WebFormParseFailed(ex.Message);
         }
         finally
         {
@@ -1022,14 +1022,14 @@ public sealed class MessageInspector : UserControl
         long contentSize;
         try { contentSize = message.DecodedBody.LongLength; }
         catch { contentSize = message.Body.LongLength; }
-        _size.Text = $"Download {FormatSize(message.Body.LongLength)}  ·  decoded content {FormatSize(contentSize)}";
+        _size.Text = Strings.Inspector.TransferSummary(FormatSize(message.Body.LongLength), FormatSize(contentSize));
     }
 
     private static string FormatSize(long size) => size switch
     {
-        < 1024 => $"{size} B",
-        < 1024 * 1024 => $"{size / 1024.0:N1} KB",
-        _ => $"{size / (1024.0 * 1024):N2} MB",
+        < 1024 => Strings.Units.Bytes(size),
+        < 1024 * 1024 => Strings.Units.Kilobytes(size / 1024.0),
+        _ => Strings.Units.Megabytes(size / (1024.0 * 1024)),
     };
 
     private void RenderImage(HttpMessage message, bool force = false)
@@ -1039,7 +1039,7 @@ public sealed class MessageInspector : UserControl
         if (!force && (message.ContentType is not { } contentType
             || !contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
         {
-            _imageStatus.Text = "Response does not have an image content type.";
+            _imageStatus.Text = Strings.Inspector.NotAnImageContentType;
             if (_imageForcePanel is not null) _imageForcePanel.Visible = true;
             return;
         }
@@ -1054,18 +1054,18 @@ public sealed class MessageInspector : UserControl
             using var source = System.Drawing.Image.FromStream(png);
             if (_imageView.Image is { } oldImage) oldImage.Dispose();
             _imageView.Image = new System.Drawing.Bitmap(source);
-            var label = message.ContentType ?? "Detected image (no Content-Type)";
-            _imageStatus.Text = $"{_imageView.Image.Width:N0} x {_imageView.Image.Height:N0} px\r\n{label}";
+            var label = message.ContentType ?? Strings.Inspector.DetectedImage;
+            _imageStatus.Text = Strings.Inspector.ImageDimensions(_imageView.Image.Width, _imageView.Image.Height, label);
         }
         catch (UnknownImageFormatException)
         {
             // Servers sometimes label a response as image/* while returning an error page or
             // other non-image bytes. This is an inspection failure, not an application error.
-            _imageStatus.Text = "Could not display this response as an image: unsupported or invalid image data.";
+            _imageStatus.Text = Strings.Inspector.ImageDecodeFailed;
         }
         catch (Exception ex)
         {
-            _imageStatus.Text = $"Could not display this response as an image: {ex.Message}";
+            _imageStatus.Text = Strings.Inspector.ImageFailed(ex.Message);
         }
     }
 
@@ -1077,7 +1077,7 @@ public sealed class MessageInspector : UserControl
         if (!force && (contentType is null
             || !contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)))
         {
-            _videoStatus.Text = "Response does not have a video content type.";
+            _videoStatus.Text = Strings.Inspector.NotAVideoContentType;
             if (_videoForcePanel is not null) _videoForcePanel.Visible = true;
             return;
         }
@@ -1093,20 +1093,20 @@ public sealed class MessageInspector : UserControl
             Directory.CreateDirectory(folder);
             File.WriteAllBytes(path, decodedBody);
             _videoFilePath = path;
-            _videoStatus.Text = $"{contentType ?? "Detected video (no Content-Type)"}\r\nLoading the embedded media player...";
+            _videoStatus.Text = Strings.Inspector.VideoLoading(contentType);
 
             await _videoView.EnsureCoreWebView2Async();
             if (_videoFilePath != path
                 || (!ReferenceEquals(_message, message) && !ReferenceEquals(_droppedVideo, message))) return;
 
             _videoView.Source = new Uri(path);
-            _videoStatus.Text = contentType ?? "Video loaded from response bytes (no Content-Type)";
+            _videoStatus.Text = contentType ?? Strings.Inspector.VideoLoadedNoContentType;
         }
         catch (Exception ex)
         {
             if (_videoFilePath == path) _videoFilePath = null;
             TryDeleteFile(path);
-            _videoStatus.Text = $"Could not load the video player: {ex.Message}";
+            _videoStatus.Text = Strings.Inspector.VideoFailed(ex.Message);
         }
     }
 
@@ -1157,11 +1157,11 @@ public sealed class MessageInspector : UserControl
         if (ContentCodec.LooksTextual(message.ContentType, decodedBody))
         {
             var text = message.BodyAsText(decodedBody);
-            sb.Append(text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + "\r\n\r\n[truncated]" : text);
+            sb.Append(text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + Strings.Inspector.Truncated : text);
         }
         else
         {
-            sb.Append($"[{message.Body.Length:N0} bytes of binary content - see the Hex tab]");
+            sb.Append(Strings.Inspector.BinaryContent(message.Body.Length));
         }
 
         return sb.ToString();
@@ -1169,21 +1169,21 @@ public sealed class MessageInspector : UserControl
 
     private static string RenderBody(HttpMessage message)
     {
-        if (message.Body.Length == 0) return "(no body)";
+        if (message.Body.Length == 0) return Strings.Inspector.NoBody;
 
         var decoded = message.DecodedBody;
         if (!ContentCodec.LooksTextual(message.ContentType, decoded))
-            return $"[{message.Body.Length:N0} bytes of {message.ContentType ?? "binary"} content]\r\n\r\nSee the Hex tab.";
+            return Strings.Inspector.BinaryBody(message.Body.Length, message.ContentType);
 
         string text;
         try { text = message.BodyAsText(decoded); }
-        catch (Exception ex) { return $"[could not decode body: {ex.Message}]"; }
+        catch (Exception ex) { return Strings.Inspector.BodyDecodeFailed(ex.Message); }
 
         var contentType = message.ContentType ?? string.Empty;
         if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase) && TryPrettyJson(text, out var pretty))
             text = pretty;
 
-        return text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + "\r\n\r\n[truncated]" : text;
+        return text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + Strings.Inspector.Truncated : text;
     }
 
     private static bool TryPrettyJson(string text, out string pretty)
@@ -1217,23 +1217,23 @@ public sealed class MessageInspector : UserControl
 
             if (message.Body.Length == 0)
             {
-                _jsonTree.Nodes.Add("(no body)");
+                _jsonTree.Nodes.Add(Strings.Inspector.NoBody);
                 return;
             }
 
             if (!force && !IsJsonContentType(message.ContentType))
             {
-                _jsonTypeStatus.Text = "Response does not have a JSON content type.";
+                _jsonTypeStatus.Text = Strings.Inspector.NotAJsonContentType;
                 _jsonForcePanel.Visible = true;
                 _jsonTypeNotice.Visible = true;
-                _jsonTree.Nodes.Add("[JSON parsing skipped because the content type does not match]");
+                _jsonTree.Nodes.Add(Strings.Inspector.JsonSkipped);
                 return;
             }
 
             var decodedBody = message.DecodedBody;
             if (!force && !ContentCodec.LooksTextual(message.ContentType, decodedBody))
             {
-                _jsonTree.Nodes.Add($"[{message.Body.Length:N0} bytes of {message.ContentType ?? "binary"} content]");
+                _jsonTree.Nodes.Add(Strings.Inspector.BinaryJsonBody(message.Body.Length, message.ContentType));
                 return;
             }
 
@@ -1248,7 +1248,7 @@ public sealed class MessageInspector : UserControl
             }
             catch (Exception ex) when (ex is JsonException or DecoderFallbackException)
             {
-                _jsonTree.Nodes.Add($"[not valid JSON: {ex.Message}]");
+                _jsonTree.Nodes.Add(Strings.Inspector.NotValidJson(ex.Message));
             }
         }
         finally
@@ -1347,7 +1347,7 @@ public sealed class MessageInspector : UserControl
         {
             if (!TryParseHex(input, out var bytes))
             {
-                _hexSearchStatus.Text = "invalid hex";
+                _hexSearchStatus.Text = Strings.Inspector.InvalidHex;
                 return;
             }
             options.Type = FindType.Hex;
@@ -1360,7 +1360,7 @@ public sealed class MessageInspector : UserControl
         }
 
         var position = _hexView.Find(options);
-        _hexSearchStatus.Text = position < 0 ? "not found" : $"found 0x{position:X}";
+        _hexSearchStatus.Text = position < 0 ? Strings.Inspector.NotFound : Strings.Inspector.FoundAt(position);
     }
 
     private static bool TryParseHex(string input, out byte[] bytes)
@@ -1395,7 +1395,8 @@ public sealed class MessageInspector : UserControl
         foreach (TreeNode root in _jsonTree.Nodes)
             FindJsonMatches(root, query);
 
-        _jsonMatchCount.Text = _jsonMatches.Count == 1 ? "1 match" : $"{_jsonMatches.Count} matches";
+        // The singular is the catalogue's _one form now, so the count is all this has to pass.
+        _jsonMatchCount.Text = Strings.Inspector.MatchCount(_jsonMatches.Count);
         if (_jsonMatches.Count > 0) SelectJsonMatch(1);
     }
 
@@ -1414,7 +1415,7 @@ public sealed class MessageInspector : UserControl
         for (var parent = match.Parent; parent is not null; parent = parent.Parent) parent.Expand();
         _jsonTree.SelectedNode = match;
         match.EnsureVisible();
-        _jsonMatchCount.Text = $"{_jsonMatchIndex + 1}/{_jsonMatches.Count}";
+        _jsonMatchCount.Text = Strings.Inspector.MatchPosition(_jsonMatchIndex + 1, _jsonMatches.Count);
     }
 
     private sealed record JsonNodeValue(string Key, string RawValue, string? StringValue);

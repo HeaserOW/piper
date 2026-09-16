@@ -35,7 +35,7 @@ public sealed class AutoResponderResponseDialog : Form
 
     public AutoResponderResponseDialog(string ruleDescription, string rawResponse)
     {
-        Text = "Edit Response";
+        Text = Strings.ResponseEditor.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimumSize = new Size(720, 560);
@@ -66,7 +66,7 @@ public sealed class AutoResponderResponseDialog : Form
         var statusRow = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(0, 2, 0, 2) };
         statusRow.Controls.Add(_reason);
         statusRow.Controls.Add(_status);
-        statusRow.Controls.Add(new Label { Text = "Status", Dock = DockStyle.Left, Width = 70, Padding = new Padding(0, 5, 0, 0) });
+        statusRow.Controls.Add(new Label { Text = Strings.ResponseEditor.StatusLabel, Dock = DockStyle.Left, Width = 70, Padding = new Padding(0, 5, 0, 0) });
 
         _headers = new TextBox
         {
@@ -84,7 +84,7 @@ public sealed class AutoResponderResponseDialog : Form
         headerPane.Controls.Add(statusRow);
         headerPane.Controls.Add(new Label
         {
-            Text = "Status and headers",
+            Text = Strings.ResponseEditor.StatusAndHeaders,
             Dock = DockStyle.Top,
             Height = 22,
             ForeColor = Palette.TextDim,
@@ -117,8 +117,8 @@ public sealed class AutoResponderResponseDialog : Form
         _jsonStatus = new Label { Dock = DockStyle.Bottom, Height = 20, ForeColor = Palette.TextDim };
 
         var editRow = new Panel { Dock = DockStyle.Bottom, Height = 62, Padding = new Padding(0, 2, 0, 2) };
-        editRow.Controls.Add(EditorRow("Value", _propertyValue));
-        editRow.Controls.Add(EditorRow("Property", _propertyName));
+        editRow.Controls.Add(EditorRow(Strings.ResponseEditor.ValueLabel, _propertyValue));
+        editRow.Controls.Add(EditorRow(Strings.ResponseEditor.PropertyLabel, _propertyName));
 
         var jsonPage = new Panel { Dock = DockStyle.Fill };
         jsonPage.Controls.Add(_tree);
@@ -126,9 +126,9 @@ public sealed class AutoResponderResponseDialog : Form
         jsonPage.Controls.Add(_jsonStatus);
 
         _bodyViews = new DarkTabControl { Dock = DockStyle.Fill, Font = Palette.UiFont };
-        var textPage = new TabPage("Text");
+        var textPage = new TabPage(Strings.ResponseEditor.TabText);
         textPage.Controls.Add(_body);
-        var treePage = new TabPage("JSON");
+        var treePage = new TabPage(Strings.ResponseEditor.TabJson);
         treePage.Controls.Add(jsonPage);
         _bodyViews.TabPages.Add(textPage);
         _bodyViews.TabPages.Add(treePage);
@@ -138,7 +138,7 @@ public sealed class AutoResponderResponseDialog : Form
         bodyPane.Controls.Add(_bodyViews);
         bodyPane.Controls.Add(new Label
         {
-            Text = "Body",
+            Text = Strings.ResponseEditor.BodyLabel,
             Dock = DockStyle.Top,
             Height = 22,
             ForeColor = Palette.TextDim,
@@ -170,9 +170,9 @@ public sealed class AutoResponderResponseDialog : Form
             AutoEllipsis = true,
         };
 
-        var save = new Button { Text = "Save", Size = new Size(100, 34) };
+        var save = new Button { Text = Strings.Common.Save, Size = new Size(100, 34) };
         save.Click += (_, _) => Commit();
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
+        var cancel = new Button { Text = Strings.Common.Cancel, DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
 
         var footer = new Panel { Dock = DockStyle.Bottom, Height = 68, Padding = new Padding(12, 12, 12, 10) };
         footer.Paint += DrawFooterBorder;
@@ -219,7 +219,7 @@ public sealed class AutoResponderResponseDialog : Form
 
             if (JsonEditing.TryParse(_body.Text, out _root, out var error))
             {
-                _jsonStatus.Text = "Select a property to edit its name or value.";
+                _jsonStatus.Text = Strings.ResponseEditor.SelectAProperty;
                 var root = new TreeNode(JsonEditing.Describe("root", _root)) { Tag = new Slot(null, null, -1) };
                 Populate(root, _root);
                 _tree.Nodes.Add(root);
@@ -227,7 +227,7 @@ public sealed class AutoResponderResponseDialog : Form
             }
             else
             {
-                _jsonStatus.Text = $"Not JSON: {error}  -  edit it on the Text tab.";
+                _jsonStatus.Text = Strings.ResponseEditor.NotJson(error);
             }
         }
         finally
@@ -325,7 +325,7 @@ public sealed class AutoResponderResponseDialog : Form
         var moved = slot with { Name = newName };
         selected.Tag = moved;
         selected.Text = JsonEditing.Describe(newName, moved.Value);
-        SyncBodyText($"Renamed to '{newName}'.");
+        SyncBodyText(Strings.ResponseEditor.Renamed(newName));
     }
 
     private void ApplyValue()
@@ -348,12 +348,12 @@ public sealed class AutoResponderResponseDialog : Form
                 break;
 
             default:
-                _jsonStatus.Text = "The whole document can only be replaced from the Text tab.";
+                _jsonStatus.Text = Strings.ResponseEditor.RootOnlyFromTextTab;
                 return;
         }
 
         selected.Text = JsonEditing.Describe(slot.Label, replacement);
-        SyncBodyText($"{slot.Label} updated.");
+        SyncBodyText(Strings.ResponseEditor.Updated(slot.Label));
     }
 
     /// <summary>Pushes the edited tree into the body text, which is what Save reads.</summary>
@@ -386,9 +386,8 @@ public sealed class AutoResponderResponseDialog : Form
         if (!HttpWireFormat.TryParseEditedResponse(raw, out var bytes, out var error))
         {
             MessageBox.Show(this,
-                $"That is not a complete HTTP response: {error}.\r\n\r\n"
-                + "Check the header lines - each should read \"Name: value\".",
-                "Edit Response", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                Strings.ResponseEditor.IncompleteResponse(error),
+                Strings.ResponseEditor.Caption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 

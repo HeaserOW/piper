@@ -43,11 +43,11 @@ internal sealed class UpdateService(RequestExecutor executor)
         ArgumentNullException.ThrowIfNull(currentVersion);
 
         if (response is null)
-            return UpdateCheckResult.Failed(requestError ?? "No response was received from GitHub.");
+            return UpdateCheckResult.Failed(requestError ?? Strings.Updates.NoResponse);
         if (response.StatusCode != 200)
-            return UpdateCheckResult.Failed($"GitHub returned HTTP {response.StatusCode}.");
+            return UpdateCheckResult.Failed(Strings.Updates.HttpStatus(response.StatusCode));
         if (response.Body.Length > MaxReleaseMetadataBytes)
-            return UpdateCheckResult.Failed("The GitHub release response was too large.");
+            return UpdateCheckResult.Failed(Strings.Updates.ResponseTooLarge);
 
         try
         {
@@ -56,17 +56,17 @@ internal sealed class UpdateService(RequestExecutor executor)
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("tag_name", out var tag)
                 || tag.ValueKind != JsonValueKind.String)
-                return UpdateCheckResult.Failed("GitHub's release response has no release tag.");
+                return UpdateCheckResult.Failed(Strings.Updates.NoReleaseTag);
 
             var tagName = tag.GetString();
             if (!TryParseReleaseVersion(tagName, out var releaseVersion))
-                return UpdateCheckResult.Failed("GitHub's release tag is not a supported Piper version.");
+                return UpdateCheckResult.Failed(Strings.Updates.UnsupportedVersion);
 
             if (releaseVersion.CompareTo(currentVersion) <= 0)
                 return UpdateCheckResult.UpToDate;
 
             if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
-                return UpdateCheckResult.Failed("GitHub's release response has no assets.");
+                return UpdateCheckResult.Failed(Strings.Updates.NoAssets);
 
             var installerName = $"Piper-{releaseVersion}-setup.exe";
             Uri? installerUri = null;
@@ -87,13 +87,13 @@ internal sealed class UpdateService(RequestExecutor executor)
             }
 
             if (installerUri is null || checksumUri is null)
-                return UpdateCheckResult.Failed("The latest release is missing its installer or SHA-256 manifest.");
+                return UpdateCheckResult.Failed(Strings.Updates.MissingInstallerOrManifest);
 
             return UpdateCheckResult.Available(new UpdateRelease(releaseVersion, installerName, installerUri, checksumUri));
         }
         catch (JsonException)
         {
-            return UpdateCheckResult.Failed("GitHub returned invalid release metadata.");
+            return UpdateCheckResult.Failed(Strings.Updates.InvalidMetadata);
         }
     }
 
@@ -112,28 +112,28 @@ internal sealed class UpdateService(RequestExecutor executor)
             using var client = CreateDownloadClient();
             var expectedHash = await DownloadExpectedHashAsync(client, release, timeout.Token).ConfigureAwait(false);
             if (expectedHash is null)
-                return UpdateDownloadResult.Failed("The release's SHA-256 manifest does not contain the installer.");
+                return UpdateDownloadResult.Failed(Strings.Updates.ManifestMissingInstaller);
 
             await DownloadFileAsync(client, release.InstallerUri, installerPath, timeout.Token).ConfigureAwait(false);
             await using var installer = File.OpenRead(installerPath);
             var actualHash = await SHA256.HashDataAsync(installer, timeout.Token).ConfigureAwait(false);
             if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
-                return UpdateDownloadResult.Failed("The installer download does not match the release SHA-256 manifest.");
+                return UpdateDownloadResult.Failed(Strings.Updates.ChecksumMismatch);
 
             downloaded = true;
             return UpdateDownloadResult.Downloaded(installerPath);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return UpdateDownloadResult.Failed("The installer download was cancelled.");
+            return UpdateDownloadResult.Failed(Strings.Updates.DownloadCancelled);
         }
         catch (OperationCanceledException)
         {
-            return UpdateDownloadResult.Failed("The installer download timed out.");
+            return UpdateDownloadResult.Failed(Strings.Updates.DownloadTimedOut);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException)
         {
-            return UpdateDownloadResult.Failed($"Could not download the installer: {ex.Message}");
+            return UpdateDownloadResult.Failed(Strings.Updates.DownloadFailed(ex.Message));
         }
         finally
         {
@@ -175,7 +175,7 @@ internal sealed class UpdateService(RequestExecutor executor)
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength is > MaxInstallerBytes)
-            throw new IOException("The installer download exceeds the 1 GB safety limit.");
+            throw new IOException(Strings.Updates.InstallerTooLarge);
 
         await using var input = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true);
@@ -186,7 +186,7 @@ internal sealed class UpdateService(RequestExecutor executor)
             var read = await input.ReadAsync(buffer, ct).ConfigureAwait(false);
             if (read == 0) break;
             written += read;
-            if (written > MaxInstallerBytes) throw new IOException("The installer download exceeds the 1 GB safety limit.");
+            if (written > MaxInstallerBytes) throw new IOException(Strings.Updates.InstallerTooLarge);
             await output.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
         }
     }
@@ -197,7 +197,7 @@ internal sealed class UpdateService(RequestExecutor executor)
         response.EnsureSuccessStatusCode();
         var contentLength = response.Content.Headers.ContentLength;
         if (contentLength is > 0 && contentLength > maximumBytes)
-            throw new IOException("The release manifest exceeds the safety limit.");
+            throw new IOException(Strings.Updates.ManifestTooLarge);
 
         await using var input = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var output = new MemoryStream();
@@ -206,7 +206,7 @@ internal sealed class UpdateService(RequestExecutor executor)
         {
             var read = await input.ReadAsync(buffer, ct).ConfigureAwait(false);
             if (read == 0) return output.ToArray();
-            if (output.Length + read > maximumBytes) throw new IOException("The release manifest exceeds the safety limit.");
+            if (output.Length + read > maximumBytes) throw new IOException(Strings.Updates.ManifestTooLarge);
             output.Write(buffer, 0, read);
         }
     }

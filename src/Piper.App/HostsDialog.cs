@@ -14,7 +14,7 @@ public sealed class HostsDialog : Form
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        Text = "Host Remapping";
+        Text = Strings.Hosts.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimumSize = new Size(680, 460);
@@ -28,7 +28,7 @@ public sealed class HostsDialog : Form
             Dock = DockStyle.Top,
             Height = 38,
             Padding = new Padding(12, 10, 8, 0),
-            Text = "Enable remapping of requests from one host to a different host or IP, overriding DNS.",
+            Text = Strings.Hosts.EnableRemapping,
             Checked = settings.Enabled,
         };
 
@@ -54,13 +54,13 @@ public sealed class HostsDialog : Form
             Height = 62,
             Padding = new Padding(12, 6, 0, 0),
             ForeColor = Palette.TextDim,
-            Text = "# Destination (IP/host)    Requested host\r\nwww.example.com    www.example2.io\r\n# Lines from a Windows hosts file (IP followed by host names) are also supported.",
+            Text = Strings.Hosts.Example,
         };
 
-        var import = new Button { Text = "Import Windows Hosts File", Size = new Size(190, 34) };
+        var import = new Button { Text = Strings.Hosts.ImportWindowsHostsFile, Size = new Size(190, 34) };
         import.Click += (_, _) => ImportWindowsHostsFile();
-        var save = new Button { Text = "Save", DialogResult = DialogResult.OK, Size = new Size(100, 34) };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
+        var save = new Button { Text = Strings.Common.Save, DialogResult = DialogResult.OK, Size = new Size(100, 34) };
+        var cancel = new Button { Text = Strings.Common.Cancel, DialogResult = DialogResult.Cancel, Size = new Size(100, 34) };
         var footer = new Panel
         {
             Dock = DockStyle.Bottom,
@@ -112,8 +112,8 @@ public sealed class HostsDialog : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, $"Piper could not read the Windows hosts file:\r\n{path}\r\n\r\n{ex.Message}",
-                "Import Windows Hosts File", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Strings.Hosts.ImportFailed(path, ex.Message),
+                Strings.Hosts.ImportWindowsHostsFile, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 

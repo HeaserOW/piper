@@ -21,6 +21,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The i18next-format string catalogue. Embedded rather than copied beside the exe so it
+         cannot be edited or replaced between builds; see the remarks on I18n. -->
+    <EmbeddedResource Include="Locales\en.json" LogicalName="Piper.App.Locales.en.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Be.Windows.Forms.HexBox.Net8" Version="2.1.0" />
     <PackageReference Include="ShimmyMySherbet.WinForms.ZoomableImageBox" Version="1.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" GeneratePathProperty="true" ExcludeAssets="build;buildTransitive" />

@@ -21,7 +21,7 @@ public sealed class AnalyticsConsentDialog : Form
 
     public AnalyticsConsentDialog()
     {
-        Text = "Help improve Piper";
+        Text = Strings.AnalyticsConsent.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         ClientSize = new Size(620, 560);
@@ -45,7 +45,7 @@ public sealed class AnalyticsConsentDialog : Form
 
         body.Controls.Add(new Label
         {
-            Text = "Would you like to send anonymous feedback?",
+            Text = Strings.AnalyticsConsent.Heading,
             Font = Palette.UiFontBold,
             AutoSize = true,
             Margin = new Padding(0, 0, 0, 8),
@@ -53,39 +53,24 @@ public sealed class AnalyticsConsentDialog : Form
 
         body.Controls.Add(new Label
         {
-            Text = "Piper is easier to improve when we can see which features get used and what breaks. "
-                + "This is entirely optional, and nothing is collected unless you choose to send it.",
+            Text = Strings.AnalyticsConsent.Intro,
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,
             Margin = new Padding(0, 0, 0, 16),
         });
 
-        var sentHeading = Heading("What is sent", Palette.StatusOk);
-        body.Controls.Add(Section(sentHeading,
-            "•  Which features you use, and how a capture or certificate step turned out\n"
-            + "•  The type of any error, with the top few stack frames\n"
-            + "•  Piper's version and your Windows version\n"
-            + "•  A random ID stored on this machine, deleted if you turn this off\n"
-            + "•  Sent over HTTPS to analyticsnew.overwolf.com, run by Overwolf",
-            TextWidth));
+        var sentHeading = Heading(Strings.AnalyticsConsent.SentHeading, Palette.StatusOk);
+        body.Controls.Add(Section(sentHeading, Strings.AnalyticsConsent.SentBullets, TextWidth));
 
-        var neverHeading = Heading("What is never sent", Palette.Accent);
-        body.Controls.Add(Section(neverHeading,
-            "•  Captured traffic of any kind - URLs, hostnames, headers, bodies, cookies\n"
-            + "•  Credentials, certificates, or private keys\n"
-            + "•  File paths, error messages, or anything you typed\n"
-            + "•  Your settings, rules, or saved sessions",
-            TextWidth));
+        var neverHeading = Heading(Strings.AnalyticsConsent.NeverHeading, Palette.Accent);
+        body.Controls.Add(Section(neverHeading, Strings.AnalyticsConsent.NeverBullets, TextWidth));
 
         body.Controls.Add(new Label
         {
-            Text = "Piper's reporting can only send short words from a fixed list, so captured traffic "
-                + "cannot be included even by mistake. Reports wait in a plain text file you can read "
-                + "before they are sent.\r\n\r\n"
-                + "\"Anonymous\" means the reports carry nothing that identifies you. Sending them is "
-                + "still a web request, so it reveals your IP address and when you were using Piper, "
-                + "the same as visiting a website would.",
+            Text = Strings.AnalyticsConsent.VocabularyNote
+                + "\r\n\r\n"
+                + Strings.AnalyticsConsent.AnonymousNote,
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,
@@ -94,7 +79,7 @@ public sealed class AnalyticsConsentDialog : Form
 
         body.Controls.Add(new Label
         {
-            Text = "You can change this at any time under Tools > Configurations > Privacy.",
+            Text = Strings.AnalyticsConsent.ChangeLater,
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,
@@ -105,14 +90,14 @@ public sealed class AnalyticsConsentDialog : Form
         // thing that turns a question into a nudge, and this one has to stand up as real consent.
         var accept = new Button
         {
-            Text = "Send anonymous feedback",
+            Text = Strings.AnalyticsConsent.Accept,
             DialogResult = DialogResult.OK,
             Size = new Size(190, 34),
         };
 
         _decline = new Button
         {
-            Text = "No thanks",
+            Text = Strings.AnalyticsConsent.Decline,
             DialogResult = DialogResult.Cancel,
             Size = new Size(120, 34),
         };

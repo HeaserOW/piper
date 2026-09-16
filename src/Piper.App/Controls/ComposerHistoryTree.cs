@@ -68,20 +68,11 @@ public sealed class ComposerHistoryTree : UserControl
             // placeholder: a dim label flush under the box reads as a query already typed in, and
             // this pane is narrow enough that a placeholder long enough to teach the grammar just
             // gets clipped. Help > Search syntax remains the full reference.
-            PlaceholderText = "Search sent requests...",
+            PlaceholderText = Strings.Composer.SearchPlaceholder,
         };
         _searchBox.TextChanged += (_, _) => Rebuild();
         _searchBox.KeyDown += OnSearchKeyDown;
-        _toolTip.SetToolTip(_searchBox, """
-            Filter your sent requests. Terms are ANDed.
-
-            method:POST   host:api   status:4xx
-            body:"user_id"   header:Authorization
-            size:>100kb   dur:>500
-            is:json   -is:image   /v[0-9]+\/orders/
-
-            Full grammar: Help > Search syntax
-            """.ReplaceLineEndings("\r\n"));
+        _toolTip.SetToolTip(_searchBox, Strings.Composer.SearchTooltip.ReplaceLineEndings("\r\n"));
 
         _count = new Label
         {
@@ -126,7 +117,7 @@ public sealed class ComposerHistoryTree : UserControl
         {
             Dock = DockStyle.Top,
             Height = 28,
-            Text = "  Composer History",
+            Text = Strings.Composer.HistoryHeader,
             ForeColor = Palette.Text,
             Font = Palette.UiFontBold,
             Padding = new Padding(0, 5, 0, 0),
@@ -181,8 +172,8 @@ public sealed class ComposerHistoryTree : UserControl
         }
 
         _count.Text = query.Warnings.Count > 0
-            ? $"{sends:N0} requests - {query.Warnings[0]}"
-            : $"{sends:N0} requests · {hosts:N0} host{(hosts == 1 ? string.Empty : "s")}";
+            ? Strings.Composer.HistoryCountWithWarning(sends, query.Warnings[0])
+            : Strings.Composer.HistoryCount(sends, hosts);
     }
 
     private void FitColumn()
@@ -223,8 +214,8 @@ public sealed class ComposerHistoryTree : UserControl
     private static string LabelFor(ComposerRow row) => row.Kind switch
     {
         ComposerRowKind.Host => row.Host,
-        ComposerRowKind.Request =>
-            ComposerHistoryView.MethodOf(row.Session) + " " + ComposerHistoryView.TargetOf(row.Session),
+        ComposerRowKind.Request => Strings.Composer.HistoryRowLabel(
+            ComposerHistoryView.MethodOf(row.Session), ComposerHistoryView.TargetOf(row.Session)),
         _ => (row.Session.Completed ?? row.Session.Started).ToLocalTime().ToString("HH:mm:ss"),
     };
 
@@ -536,7 +527,7 @@ public sealed class ComposerHistoryTree : UserControl
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
-        var remove = new ToolStripMenuItem("&Remove from history\tDel", null, (_, _) => RemoveSelected());
+        var remove = Menus.Item(Strings.Composer.RemoveFromHistory, Strings.Shortcuts.Delete, (_, _) => RemoveSelected());
         menu.Items.Add(remove);
         menu.Opening += (_, _) => remove.Enabled = SelectedRows().Count > 0;
         return menu;
@@ -577,13 +568,12 @@ public sealed class ComposerHistoryTree : UserControl
         if (hosts.Count == 0) return true;
 
         var what = hosts.Count == 1
-            ? $"everything sent to {hosts[0].Host}"
-            : $"everything sent to {hosts.Count:N0} hosts";
+            ? Strings.Composer.RemoveGroupOneHost(hosts[0].Host)
+            : Strings.Composer.RemoveGroupManyHosts(hosts.Count);
 
         return MessageBox.Show(this,
-            $"Remove {what} from the Composer history?\r\n\r\n"
-            + $"{sends:N0} request{(sends == 1 ? string.Empty : "s")} will be removed. This cannot be undone.",
-            "Piper", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK;
+            Strings.Composer.ConfirmRemoveGroup(what, sends),
+            Strings.App.Name, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) == DialogResult.OK;
     }
 
     // ------------------------------------------------------------------ helpers

@@ -27,27 +27,27 @@ public sealed class TextWizardDialog : Form
     /// <summary>Fiddler's transform list, in Fiddler's order and using Fiddler's names.</summary>
     private static readonly (string Label, TextTransform Transform)[] Choices =
     [
-        ("To Base64", TextTransform.ToBase64),
-        ("To Base64URL", TextTransform.ToBase64Url),
-        ("From Base64", TextTransform.FromBase64),
-        ("URLEncode", TextTransform.UrlEncode),
-        ("URLDecode", TextTransform.UrlDecode),
-        ("HexEncode", TextTransform.HexEncode),
-        ("HexDecode", TextTransform.HexDecode),
-        ("To C# byte[]", TextTransform.ToCSharpByteArray),
-        ("To JS string", TextTransform.ToJsString),
-        ("From JS string", TextTransform.FromJsString),
-        ("HTML Encode", TextTransform.HtmlEncode),
-        ("HTML Decode", TextTransform.HtmlDecode),
-        ("To UTF-7", TextTransform.ToUtf7),
-        ("From UTF-7", TextTransform.FromUtf7),
-        ("To DeflatedSAML", TextTransform.ToDeflatedSaml),
-        ("From DeflatedSAML", TextTransform.FromDeflatedSaml),
-        ("To MD5", TextTransform.Md5),
-        ("To SHA1", TextTransform.Sha1),
-        ("To SHA256", TextTransform.Sha256),
-        ("To SHA384", TextTransform.Sha384),
-        ("To SHA512", TextTransform.Sha512),
+        (Strings.TextWizard.ToBase64, TextTransform.ToBase64),
+        (Strings.TextWizard.ToBase64Url, TextTransform.ToBase64Url),
+        (Strings.TextWizard.FromBase64, TextTransform.FromBase64),
+        (Strings.TextWizard.UrlEncode, TextTransform.UrlEncode),
+        (Strings.TextWizard.UrlDecode, TextTransform.UrlDecode),
+        (Strings.TextWizard.HexEncode, TextTransform.HexEncode),
+        (Strings.TextWizard.HexDecode, TextTransform.HexDecode),
+        (Strings.TextWizard.ToCSharpByteArray, TextTransform.ToCSharpByteArray),
+        (Strings.TextWizard.ToJsString, TextTransform.ToJsString),
+        (Strings.TextWizard.FromJsString, TextTransform.FromJsString),
+        (Strings.TextWizard.HtmlEncode, TextTransform.HtmlEncode),
+        (Strings.TextWizard.HtmlDecode, TextTransform.HtmlDecode),
+        (Strings.TextWizard.ToUtf7, TextTransform.ToUtf7),
+        (Strings.TextWizard.FromUtf7, TextTransform.FromUtf7),
+        (Strings.TextWizard.ToDeflatedSaml, TextTransform.ToDeflatedSaml),
+        (Strings.TextWizard.FromDeflatedSaml, TextTransform.FromDeflatedSaml),
+        (Strings.TextWizard.ToMd5, TextTransform.Md5),
+        (Strings.TextWizard.ToSha1, TextTransform.Sha1),
+        (Strings.TextWizard.ToSha256, TextTransform.Sha256),
+        (Strings.TextWizard.ToSha384, TextTransform.Sha384),
+        (Strings.TextWizard.ToSha512, TextTransform.Sha512),
     ];
 
     private static TextWizardDialog? _open;
@@ -74,7 +74,7 @@ public sealed class TextWizardDialog : Form
 
     private TextWizardDialog()
     {
-        Text = "TextWizard";
+        Text = Strings.TextWizard.Caption;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.Sizable;
         MinimumSize = new Size(700, 500);
@@ -90,7 +90,7 @@ public sealed class TextWizardDialog : Form
             AutoSize = true,
             Padding = new Padding(10, 6, 10, 6),
             ForeColor = Palette.TextDim,
-            Text = "Encodes and decodes text. Enter text above and choose a transform.",
+            Text = Strings.TextWizard.Hint,
         };
 
         _input = new TextBox
@@ -102,7 +102,7 @@ public sealed class TextWizardDialog : Form
             WordWrap = false,
             Font = Palette.Mono,
             MaxLength = MaxInputLength,
-            AccessibleName = "TextWizard input",
+            AccessibleName = Strings.TextWizard.InputAccessibleName,
         };
         _input.TextChanged += (_, _) => Run();
 
@@ -114,14 +114,14 @@ public sealed class TextWizardDialog : Form
             ScrollBars = ScrollBars.Both,
             WordWrap = false,
             Font = Palette.Mono,
-            AccessibleName = "TextWizard output",
+            AccessibleName = Strings.TextWizard.OutputAccessibleName,
         };
 
         _transform = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
             Font = Palette.UiFont,
-            AccessibleName = "TextWizard transform",
+            AccessibleName = Strings.TextWizard.TransformAccessibleName,
             Margin = new Padding(0, 3, 0, 0),
         };
         foreach (var choice in Choices) _transform.Items.Add(choice.Label);
@@ -133,26 +133,26 @@ public sealed class TextWizardDialog : Form
 
         _viewBytes = new CheckBox
         {
-            Text = "View bytes",
+            Text = Strings.TextWizard.ViewBytes,
             Font = Palette.UiFont,
             AutoSize = true,
-            AccessibleName = "TextWizard view bytes",
+            AccessibleName = Strings.TextWizard.ViewBytesAccessibleName,
             Margin = new Padding(16, 6, 0, 0),
         };
         _viewBytes.CheckedChanged += (_, _) => ShowResult();
 
-        var saveToFile = Action("Save", "Save the output to a file", SaveIcon(), SaveOutput);
+        var saveToFile = Action(Strings.TextWizard.SaveButton, Strings.TextWizard.SaveTooltip, SaveIcon(), SaveOutput);
         // Through SetInput, never straight into _input.Text: MaxLength does not apply to an assignment, so
         // a direct write would skip the 1 MiB bound, and transforms expand their input - repeated chaining
         // of "To C# byte[]" would compound 1 MiB into hundreds.
-        var chain = Action("To Input", "Send output to input", UpArrowIcon(), () => SetInput(_result));
-        var close = Action("Close", "Close the TextWizard", null, Close);
+        var chain = Action(Strings.TextWizard.ToInputButton, Strings.TextWizard.ToInputTooltip, UpArrowIcon(), () => SetInput(_result));
+        var close = Action(Strings.TextWizard.CloseButton, Strings.TextWizard.CloseTooltip, null, Close);
         MakeSameSize(saveToFile, chain, close);
 
         var left = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = Padding.Empty };
         left.Controls.Add(new Label
         {
-            Text = "Transform:",
+            Text = Strings.TextWizard.TransformLabel,
             Font = Palette.UiFont,
             AutoSize = true,
             Margin = new Padding(0, 7, 6, 0),
@@ -196,7 +196,7 @@ public sealed class TextWizardDialog : Form
             Spring = true,
             TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Palette.TextDim,
-            AccessibleName = "TextWizard status",
+            AccessibleName = Strings.TextWizard.StatusAccessibleName,
         };
         var statusBar = new StatusStrip { Font = Palette.UiFont, SizingGrip = true };
         statusBar.Items.Add(_status);
@@ -240,7 +240,7 @@ public sealed class TextWizardDialog : Form
         // Both the text and the transform are being set for the user, so the pair is applied as one change:
         // one transform run at the end rather than one per assignment, and no write over their saved choice.
         var note = bounded.Length < text.Length
-            ? $"Input was truncated to {MaxInputLength / 1024 / 1024} MiB."
+            ? Strings.TextWizard.Truncated(MaxInputLength / 1024 / 1024)
             : null;
         _selectingForUser = true;
         try
@@ -249,7 +249,7 @@ public sealed class TextWizardDialog : Form
             if (note is null && TextTransformDetector.Detect(bounded) is { } detected && IndexOf(detected) is { } index)
             {
                 _transform.SelectedIndex = index;
-                note = $"Detected {Choices[index].Label}.";
+                note = Strings.TextWizard.Detected(Choices[index].Label);
             }
         }
         finally
@@ -294,7 +294,7 @@ public sealed class TextWizardDialog : Form
             _status.ForeColor = Palette.TextDim;
             // At the limit is not the same as cut short: text of exactly this length was never truncated.
             if (_input.TextLength >= MaxInputLength && !keepStatus)
-                _status.Text = $"Input is at the {MaxInputLength / 1024 / 1024} MiB limit.";
+                _status.Text = Strings.TextWizard.AtLimit(MaxInputLength / 1024 / 1024);
             else if (!keepStatus)
                 _status.Text = string.Empty;
         }
@@ -303,7 +303,7 @@ public sealed class TextWizardDialog : Form
             // Malformed input is the normal case for a decoder, not a crash: say so and show nothing.
             _result = string.Empty;
             _status.ForeColor = Palette.StatusClientError;
-            _status.Text = $"{_transform.Text}: {ex.Message}";
+            _status.Text = Strings.TextWizard.TransformFailed(_transform.Text, ex.Message);
         }
 
         ShowResult();
@@ -312,7 +312,7 @@ public sealed class TextWizardDialog : Form
     private void ShowResult()
     {
         _output.Text = _viewBytes.Checked ? HexDump(_result) : _result;
-        Text = $"TextWizard [{_input.TextLength} => {_result.Length} chars]";
+        Text = Strings.TextWizard.CaptionWithCounts(_input.TextLength, _result.Length);
     }
 
     private static int? IndexOf(TextTransform? transform)
@@ -356,7 +356,7 @@ public sealed class TextWizardDialog : Form
         }
 
         if (shown < all.Length)
-            dump.Append("... ").Append(all.Length - shown).AppendLine(" more bytes not shown.");
+            dump.AppendLine(Strings.TextWizard.MoreBytesNotShown(all.Length - shown));
 
         return dump.ToString();
     }
@@ -367,9 +367,9 @@ public sealed class TextWizardDialog : Form
 
         using var dialog = new SaveFileDialog
         {
-            Title = "Save TextWizard output",
-            Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
-            FileName = "textwizard-output.txt",
+            Title = Strings.TextWizard.SaveCaption,
+            Filter = Strings.TextWizard.SaveFilter,
+            FileName = Strings.TextWizard.SaveFileName,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -379,8 +379,8 @@ public sealed class TextWizardDialog : Form
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            MessageBox.Show(this, $"Piper could not write that file:\r\n\r\n{ex.Message}",
-                "Save TextWizard output", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show(this, Strings.TextWizard.SaveFailed(ex.Message),
+                Strings.TextWizard.SaveCaption, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
