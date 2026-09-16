@@ -41,7 +41,7 @@ internal static class DiagnosticsBundle
     }
 
     /// <summary>Entries the bundle always contains, for telling the user what they are sending.</summary>
-    public static string Contents => "environment.txt, log.txt and crash.log (when one exists)";
+    public static string Contents => Strings.Diagnostics.Contents;
 
     /// <summary>
     /// A log message made safe to publish: the user's profile directory reduced to
@@ -116,10 +116,10 @@ internal static class DiagnosticsBundle
     {
         ArgumentNullException.ThrowIfNull(items);
 
-        if (total == 0) return "none";
+        if (total == 0) return Strings.Diagnostics.SummaryNone;
 
         var shown = string.Join(", ", items.Take(max));
-        return total <= max ? shown : $"{shown} and {total - max} more";
+        return total <= max ? shown : Strings.Diagnostics.SummaryAndMore(shown, total - max);
     }
 
     private static void AddText(ZipArchive archive, string name, string? content)
@@ -163,7 +163,7 @@ internal static class DiagnosticsBundle
             // A tail that starts mid-line also starts mid-UTF-8-sequence, which decodes to a
             // replacement character. Dropping the partial line removes both.
             var firstLine = text.IndexOf('\n');
-            return $"[earlier entries omitted]{Environment.NewLine}"
+            return Strings.Diagnostics.EarlierEntriesOmitted + Environment.NewLine
                 + (firstLine < 0 ? text : text[(firstLine + 1)..]);
         }
         catch (FileNotFoundException) { return null; }
@@ -172,7 +172,7 @@ internal static class DiagnosticsBundle
         {
             // File name only: the bundle is forwarded by definition, so it carries no more of the
             // machine's directory layout than it has to.
-            return $"crash log {Path.GetFileName(path)} could not be read: {ex.Message}";
+            return Strings.Diagnostics.CrashLogUnreadable(Path.GetFileName(path), ex.Message);
         }
     }
 }

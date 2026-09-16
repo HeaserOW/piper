@@ -82,7 +82,7 @@ internal static class Program
         catch (IOException) { /* nothing useful to do if even logging fails */ }
 
         MessageBox.Show(
-            $"{exception.GetType().Name}: {exception.Message}\r\n\r\n{exception.StackTrace}",
-            "Piper - unexpected error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Strings.App.CrashReport(exception.GetType().Name, exception.Message, exception.StackTrace),
+            Strings.App.UnexpectedErrorCaption, MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 }

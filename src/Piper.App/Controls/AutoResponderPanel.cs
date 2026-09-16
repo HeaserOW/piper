@@ -56,7 +56,7 @@ public sealed class AutoResponderPanel : UserControl
 
         _enabled = new CheckBox
         {
-            Text = "Enable rules",
+            Text = Strings.AutoResponder.EnableRules,
             Dock = DockStyle.Fill,
             AutoSize = false,
             Padding = new Padding(6, 8, 0, 0),
@@ -66,7 +66,7 @@ public sealed class AutoResponderPanel : UserControl
 
         _passthrough = new CheckBox
         {
-            Text = "Unmatched requests pass through to the server",
+            Text = Strings.AutoResponder.PassthroughUnmatched,
             Dock = DockStyle.Top,
             AutoSize = false,
             Height = 28,
@@ -83,19 +83,19 @@ public sealed class AutoResponderPanel : UserControl
             GripStyle = ToolStripGripStyle.Hidden,
             Font = Palette.UiFont,
         };
-        var actionsButton = new ToolStripDropDownButton("Actions") { DisplayStyle = ToolStripItemDisplayStyle.Text };
-        actionsButton.DropDownItems.Add("Add rule", null, (_, _) => AddRule(new AutoResponderRule()));
-        actionsButton.DropDownItems.Add("Edit Response...", null, (_, _) => EditResponse());
-        actionsButton.DropDownItems.Add("Remove rule", null, (_, _) => RemoveSelected());
+        var actionsButton = new ToolStripDropDownButton(Strings.AutoResponder.Actions) { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.AddRule, null, (_, _) => AddRule(new AutoResponderRule()));
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.EditResponse, null, (_, _) => EditResponse());
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.RemoveRule, null, (_, _) => RemoveSelected());
         actionsButton.DropDownItems.Add(new ToolStripSeparator());
-        actionsButton.DropDownItems.Add("Move up\tCtrl+Up", null, (_, _) => MoveSelected(-1));
-        actionsButton.DropDownItems.Add("Move down\tCtrl+Down", null, (_, _) => MoveSelected(1));
+        actionsButton.DropDownItems.Add(Menus.Item(Strings.AutoResponder.MoveUp, Strings.Shortcuts.CtrlUp, (_, _) => MoveSelected(-1)));
+        actionsButton.DropDownItems.Add(Menus.Item(Strings.AutoResponder.MoveDown, Strings.Shortcuts.CtrlDown, (_, _) => MoveSelected(1)));
         actionsButton.DropDownItems.Add(new ToolStripSeparator());
-        actionsButton.DropDownItems.Add("Reset hit counts", null, (_, _) => { _responder.ResetStatistics(); RefreshStatistics(); });
-        actionsButton.DropDownItems.Add("Import rules...", null, (_, _) => ImportRules());
-        actionsButton.DropDownItems.Add("Export rules...", null, (_, _) => ExportRules());
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.ResetHitCounts, null, (_, _) => { _responder.ResetStatistics(); RefreshStatistics(); });
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.ImportRules, null, (_, _) => ImportRules());
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.ExportRules, null, (_, _) => ExportRules());
         actionsButton.DropDownItems.Add(new ToolStripSeparator());
-        actionsButton.DropDownItems.Add("Help", null, (_, _) => ShowHelp());
+        actionsButton.DropDownItems.Add(Strings.AutoResponder.HelpMenu, null, (_, _) => ShowHelp());
         actions.Items.Add(actionsButton);
 
         // The Actions strip lives in its own row rather than being docked into the whole header,
@@ -119,11 +119,11 @@ public sealed class AutoResponderPanel : UserControl
             HideSelection = false,
             HeaderStyle = ColumnHeaderStyle.Nonclickable,
         };
-        _list.Columns.Add("On", 44);
-        _list.Columns.Add("Match", 300);
-        _list.Columns.Add("Action", 220);
-        _list.Columns.Add("Hits", 54);
-        _list.Columns.Add("Last match", 104);
+        _list.Columns.Add(Strings.AutoResponder.ColumnOn, 44);
+        _list.Columns.Add(Strings.AutoResponder.ColumnMatch, 300);
+        _list.Columns.Add(Strings.AutoResponder.ColumnAction, 220);
+        _list.Columns.Add(Strings.AutoResponder.ColumnHits, 54);
+        _list.Columns.Add(Strings.AutoResponder.ColumnLastMatch, 104);
         // Not DarkListView.Attach: this grid draws its own rows so the enable column can carry a
         // checkbox and disabled rules can be dimmed. The header and buffering come from there.
         DarkListView.EnableDoubleBuffering(_list);
@@ -148,18 +148,18 @@ public sealed class AutoResponderPanel : UserControl
         _body = NewEditor();
         _contentType = NewEditor();
 
-        _browse = new Button { Text = "File...", Width = 76, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _browse = new Button { Text = Strings.AutoResponder.BrowseButton, Width = 76, FlatStyle = FlatStyle.Flat, Enabled = false };
         _browse.Click += (_, _) => BrowseForFile();
 
         var editor = new Panel { Dock = DockStyle.Bottom, Height = 132, Padding = new Padding(6, 4, 6, 4) };
-        editor.Controls.Add(EditorRow("Content-Type", _contentType, null));
-        editor.Controls.Add(EditorRow("Body", _body, null));
-        editor.Controls.Add(EditorRow("Action", _action, _browse));
-        editor.Controls.Add(EditorRow("Match", _match, null));
+        editor.Controls.Add(EditorRow(Strings.AutoResponder.LabelContentType, _contentType, null));
+        editor.Controls.Add(EditorRow(Strings.AutoResponder.LabelBody, _body, null));
+        editor.Controls.Add(EditorRow(Strings.AutoResponder.LabelAction, _action, _browse));
+        editor.Controls.Add(EditorRow(Strings.AutoResponder.LabelMatch, _match, null));
 
         // ---------------------------------------------------------------- tester
 
-        _testButton = new Button { Text = "Test", Width = 76, FlatStyle = FlatStyle.Flat, Enabled = false };
+        _testButton = new Button { Text = Strings.AutoResponder.TestButton, Width = 76, FlatStyle = FlatStyle.Flat, Enabled = false };
         _testButton.Click += (_, _) => _ = RunTestAsync();
 
         _testUrl = new TextBox { Dock = DockStyle.Fill, Font = Palette.Mono };
@@ -186,7 +186,7 @@ public sealed class AutoResponderPanel : UserControl
         testInput.Controls.Add(Gutter(_testButton));
         testInput.Controls.Add(new Label
         {
-            Text = "Test URL",
+            Text = Strings.AutoResponder.LabelTestUrl,
             Dock = DockStyle.Left,
             Width = 106,
             Padding = new Padding(0, 5, 0, 0),
@@ -279,7 +279,7 @@ public sealed class AutoResponderPanel : UserControl
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 rule.Action = $"*{response.StatusCode}";
-                rule.Comment = $"Could not save the captured response: {ex.Message}";
+                rule.Comment = Strings.AutoResponder.CapturedResponseSaveFailed(ex.Message);
             }
         }
         else
@@ -294,13 +294,13 @@ public sealed class AutoResponderPanel : UserControl
     {
         var menu = new ContextMenuStrip { Font = Palette.UiFont };
 
-        var edit = new ToolStripMenuItem("&Edit Response...", null, (_, _) => EditResponse());
-        var toggle = new ToolStripMenuItem("Disa&ble rule", null, (_, _) => ToggleSelected());
-        var up = new ToolStripMenuItem("Move &up\tCtrl+Up", null, (_, _) => MoveSelected(-1));
-        var down = new ToolStripMenuItem("Move &down\tCtrl+Down", null, (_, _) => MoveSelected(1));
-        var remove = new ToolStripMenuItem("&Remove rule\tDel", null, (_, _) => RemoveSelected());
+        var edit = new ToolStripMenuItem(Strings.AutoResponder.MenuEditResponse, null, (_, _) => EditResponse());
+        var toggle = new ToolStripMenuItem(Strings.AutoResponder.MenuDisableRule, null, (_, _) => ToggleSelected());
+        var up = Menus.Item(Strings.AutoResponder.MenuMoveUp, Strings.Shortcuts.CtrlUp, (_, _) => MoveSelected(-1));
+        var down = Menus.Item(Strings.AutoResponder.MenuMoveDown, Strings.Shortcuts.CtrlDown, (_, _) => MoveSelected(1));
+        var remove = Menus.Item(Strings.AutoResponder.MenuRemoveRule, Strings.Shortcuts.Delete, (_, _) => RemoveSelected());
 
-        menu.Items.Add(new ToolStripMenuItem("&Add rule", null, (_, _) => AddRule(new AutoResponderRule())));
+        menu.Items.Add(new ToolStripMenuItem(Strings.AutoResponder.MenuAddRule, null, (_, _) => AddRule(new AutoResponderRule())));
         menu.Items.Add(edit);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(toggle);
@@ -317,7 +317,9 @@ public sealed class AutoResponderPanel : UserControl
             edit.Enabled = toggle.Enabled = remove.Enabled = rule is not null;
             up.Enabled = index is > 0;
             down.Enabled = index is { } position && position < _rules.Count - 1;
-            toggle.Text = rule is { Enabled: false } ? "Ena&ble rule" : "Disa&ble rule";
+            toggle.Text = rule is { Enabled: false }
+                ? Strings.AutoResponder.MenuEnableRule
+                : Strings.AutoResponder.MenuDisableRule;
         };
 
         return menu;
@@ -341,7 +343,7 @@ public sealed class AutoResponderPanel : UserControl
         var rule = _rules[index];
 
         var editor = new AutoResponderResponseDialog(
-            string.IsNullOrWhiteSpace(rule.Match) ? "(new rule)" : rule.Match,
+            string.IsNullOrWhiteSpace(rule.Match) ? Strings.AutoResponder.NewRuleDescription : rule.Match,
             HttpWireFormat.ToEditableText(CurrentResponseFor(rule)));
 
         using (editor)
@@ -357,8 +359,8 @@ public sealed class AutoResponderPanel : UserControl
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                MessageBox.Show(this, $"Piper could not save the response: {ex.Message}",
-                    "Edit Response", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(this, Strings.AutoResponder.ResponseSaveFailed(ex.Message),
+                    Strings.AutoResponder.EditResponseCaption, MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
         }
@@ -480,8 +482,8 @@ public sealed class AutoResponderPanel : UserControl
 
             _browse.Enabled = editable;
             _tips.SetToolTip(_browse.Parent!, editable
-                ? "Choose a file for this rule to serve."
-                : "Select a rule first - this fills in its Action with a file to serve.");
+                ? Strings.AutoResponder.BrowseTooltip
+                : Strings.AutoResponder.BrowseDisabledTooltip);
         }
         finally
         {
@@ -497,10 +499,10 @@ public sealed class AutoResponderPanel : UserControl
         _testButton.Enabled = testable;
 
         _tips.SetToolTip(_testButton.Parent!, testable
-            ? "Show which rule wins for this URL, without sending a request."
+            ? Strings.AutoResponder.TestTooltip
             : text.Length == 0
-                ? "Enter a URL to see which rule would claim it."
-                : "That is not an absolute http:// or https:// URL.");
+                ? Strings.AutoResponder.TestEmptyTooltip
+                : Strings.AutoResponder.TestInvalidTooltip);
 
         // Clear a stale verdict as soon as the URL it described is edited.
         if (!testable) ShowTestResult(string.Empty, isProblem: false);
@@ -647,15 +649,15 @@ public sealed class AutoResponderPanel : UserControl
         scratch.Apply(settings);
         var decision = scratch.Evaluate(probe, recordHit: false);
 
-        var prefix = live ? string.Empty : "Rules are switched off, but: ";
+        var prefix = live ? string.Empty : Strings.AutoResponder.RulesOffPrefix;
         if (decision.Outcome == AutoResponderOutcome.Passthrough && decision.Rule is null)
         {
-            ShowTestResult($"{prefix}no rule matches, so this request would go to its origin.", isProblem: false);
+            ShowTestResult(Strings.AutoResponder.NoRuleMatches(prefix), isProblem: false);
             return;
         }
 
         var summary = prefix + decision.Description;
-        if (decision.Delay > TimeSpan.Zero) summary += $"  (after {decision.Delay.TotalMilliseconds:N0} ms)";
+        if (decision.Delay > TimeSpan.Zero) summary += Strings.AutoResponder.TestDelay(decision.Delay.TotalMilliseconds);
 
         switch (decision.Outcome)
         {
@@ -665,35 +667,37 @@ public sealed class AutoResponderPanel : UserControl
                     .BuildResponseAsync(decision.Rule!, decision.Match, probe.Request!, 128L * 1024 * 1024, default)
                     .ConfigureAwait(true);
                 var preview = Preview(response);
-                ShowTestResult($"{summary}  =>  {response.StatusCode} {response.ReasonPhrase}{preview}",
+                ShowTestResult(
+                    Strings.AutoResponder.TestRespond(summary, response.StatusCode, response.ReasonPhrase, preview),
                     isProblem: response.StatusCode == 502);
                 break;
             }
 
             case AutoResponderOutcome.Redirect:
-                ShowTestResult($"{summary}  =>  fetches {decision.Action!.ResolveTarget(decision.Match, url)}", false);
+                ShowTestResult(
+                    Strings.AutoResponder.TestRedirect(summary, decision.Action!.ResolveTarget(decision.Match, url)), false);
                 break;
 
             case AutoResponderOutcome.Drop:
             case AutoResponderOutcome.Reset:
-                ShowTestResult($"{summary}  =>  the connection is killed", false);
+                ShowTestResult(Strings.AutoResponder.TestKilled(summary), false);
                 break;
 
             default:
-                ShowTestResult($"{summary}  =>  passes through to the origin", false);
+                ShowTestResult(Strings.AutoResponder.TestPassthrough(summary), false);
                 break;
         }
     }
 
     private static string Preview(HttpResponseData response)
     {
-        if (response.Body.Length == 0) return ", no body";
+        if (response.Body.Length == 0) return Strings.AutoResponder.PreviewNoBody;
 
         var text = ContentCodec.LooksTextual(response.ContentType, response.Body)
             ? response.BodyAsText().ReplaceLineEndings(" ")
-            : $"{response.Body.Length:N0} bytes";
+            : Strings.AutoResponder.PreviewBinary(response.Body.Length);
 
-        return $", {(text.Length > 90 ? text[..90] + "..." : text)}";
+        return Strings.AutoResponder.Preview(text);
     }
 
     private void ShowTestResult(string text, bool isProblem)
@@ -708,16 +712,16 @@ public sealed class AutoResponderPanel : UserControl
     {
         using var dialog = new OpenFileDialog
         {
-            Title = "Import AutoResponder rules",
-            Filter = "AutoResponder rules (*.json)|*.json|All files (*.*)|*.*",
+            Title = Strings.AutoResponder.ImportCaption,
+            Filter = Strings.AutoResponder.RulesFilter,
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         var imported = AutoResponderSettingsStore.Load(dialog.FileName);
         if (imported is null)
         {
-            MessageBox.Show(this, "That file does not contain a readable rule set.",
-                "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, Strings.AutoResponder.UnreadableRuleSet,
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
@@ -728,9 +732,9 @@ public sealed class AutoResponderPanel : UserControl
     {
         using var dialog = new SaveFileDialog
         {
-            Title = "Export AutoResponder rules",
-            Filter = "AutoResponder rules (*.json)|*.json|All files (*.*)|*.*",
-            FileName = "AutoResponder.json",
+            Title = Strings.AutoResponder.ExportCaption,
+            Filter = Strings.AutoResponder.RulesFilter,
+            FileName = Strings.AutoResponder.ExportFileName,
             DefaultExt = "json",
             AddExtension = true,
         };
@@ -743,41 +747,14 @@ public sealed class AutoResponderPanel : UserControl
     {
         if (SelectedIndex is null) return;
 
-        using var dialog = new OpenFileDialog { Title = "Choose the file to serve" };
+        using var dialog = new OpenFileDialog { Title = Strings.AutoResponder.ChooseFileCaption };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
         _action.Text = dialog.FileName;
     }
 
-    private void ShowHelp() => MessageBox.Show(this,
-        """
-        Rules are checked from the top down; the first enabled rule that matches wins.
-
-        Match
-          orders                     part of the URL, ignoring case
-          EXACT:https://host/path    the whole URL, case-sensitive
-          NOT:orders                 everything the rest does not match
-          REGEX:/v(?<n>\d+)/items    a regular expression, with ${n} usable in the action
-          METHOD:POST                the request method
-          HEADER:X-Env=staging       a request header
-          URLWithBody:coupon         the URL and the request body together
-          Q:method:POST host:api     Piper's own filter grammar, request fields only
-
-        Action
-          *404, *503, *200           answer with that status
-          C:\mocks\orders.json       serve that file, content type from its extension
-          *inline                    serve the Body box below
-          *raw:C:\path\captured.txt  serve a complete saved response, headers included
-          *redir:https://other/path  send the client a 307 redirect
-          https://other/path         fetch that instead, without telling the client
-          *delay:500                 pause, then carry on. Combine: *delay:500 *503
-          *drop, *reset              kill the connection
-          *CORSPreflightAllow        answer an OPTIONS preflight permissively
-
-        Rules cannot see traffic inside an undecrypted HTTPS tunnel. If a rule never fires for
-        an HTTPS host, check Tools > Configurations > HTTPS.
-        """,
-        "AutoResponder", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    private void ShowHelp() => MessageBox.Show(this, Strings.AutoResponder.HelpBody,
+        Strings.AutoResponder.HelpCaption, MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     // ------------------------------------------------------------------- plumbing
 
