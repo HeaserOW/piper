@@ -1,4 +1,4 @@
-using System.Windows.Forms;
+﻿using System.Windows.Forms;
 using Piper.App.Theme;
 
 namespace Piper.App;
@@ -86,26 +86,44 @@ public sealed class AnalyticsConsentDialog : Form
             Margin = new Padding(0, 0, 0, 0),
         });
 
-        // Equal size on purpose. Making the refusal smaller or quieter than the acceptance is the
-        // thing that turns a question into a nudge, and this one has to stand up as real consent.
+        // Both buttons end up the same size, whichever label is wider, because making the refusal
+        // smaller or quieter than the acceptance is the thing that turns a question into a nudge.
+        // Sized from the text rather than in fixed pixels: the UI font scales from 70% to 150% and
+        // the labels come from the catalogue, so a fixed width clips a longer translation.
         var accept = new Button
         {
             Text = Strings.AnalyticsConsent.Accept,
             DialogResult = DialogResult.OK,
-            Size = new Size(190, 34),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(12, 6, 12, 6),
         };
 
         _decline = new Button
         {
             Text = Strings.AnalyticsConsent.Decline,
             DialogResult = DialogResult.Cancel,
-            Size = new Size(120, 34),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(12, 6, 12, 6),
         };
+
+        // Both answers get the same size, whichever label is wider, measured before anything is
+        // docked: a docked, auto-sizing footer collapses to nothing, so its height is computed from
+        // the buttons instead. That keeps it scaling with the 70%-150% UI font without depending on
+        // layout that WinForms resolves differently once Dock is involved.
+        var buttonSize = new Size(
+            Math.Max(accept.PreferredSize.Width, _decline.PreferredSize.Width),
+            Math.Max(accept.PreferredSize.Height, _decline.PreferredSize.Height));
+        accept.AutoSize = false;
+        _decline.AutoSize = false;
+        accept.Size = buttonSize;
+        _decline.Size = buttonSize;
 
         var footer = new Panel
         {
             Dock = DockStyle.Bottom,
-            Height = 68,
+            Height = buttonSize.Height + 34,
             Padding = new Padding(12, 12, 12, 10),
         };
         footer.Paint += (_, e) =>
@@ -117,7 +135,7 @@ public sealed class AnalyticsConsentDialog : Form
         var actions = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 330,
+            Width = (buttonSize.Width * 2) + 24,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
         };

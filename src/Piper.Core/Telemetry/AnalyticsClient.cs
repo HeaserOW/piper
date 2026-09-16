@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -202,15 +203,19 @@ public sealed class AnalyticsClient : IDisposable
 
     private void DiscardSpool()
     {
-        _queue.Clear();
-        Interlocked.Exchange(ref _queued, 0);
-
         try
         {
             lock (_spoolLock)
             {
                 if (File.Exists(_spoolPath)) File.Delete(_spoolPath);
                 if (File.Exists(_inflightPath)) File.Delete(_inflightPath);
+
+                // Cleared inside the lock and after the deletes. Clearing first left a gap in which
+                // a Track already past its own Enabled check could enqueue, and the next drain would
+                // rebuild the spool the user had just discarded - a file the Privacy tab then offers
+                // to open. DrainToSpool refuses to write while disabled for the same reason.
+                _queue.Clear();
+                Interlocked.Exchange(ref _queued, 0);
             }
         }
         catch (IOException)
@@ -389,7 +394,17 @@ public sealed class AnalyticsClient : IDisposable
         {
             while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
             {
-                await FlushAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception tickFailure) when (tickFailure is not OperationCanceledException)
+                {
+                    // Anything unanticipated out of one flush would otherwise fault this task and
+                    // silently end reporting for the life of the process, unobserved because Dispose
+                    // swallows the fault. One tick is the right blast radius.
+                    Debug.WriteLine($"Analytics flush failed: {tickFailure.GetType().Name}");
+                }
             }
         }
         catch (OperationCanceledException)
@@ -406,22 +421,37 @@ public sealed class AnalyticsClient : IDisposable
     /// <summary>Appends queued events to the spool. Caller holds <see cref="_spoolLock"/>.</summary>
     private void DrainToSpool()
     {
-        if (_queue.IsEmpty) return;
+        // Checked here as well as in Track: an opt-out between the two would otherwise be undone by
+        // this write, which is the one place that can put the spool back after DiscardSpool.
+        if (_queue.IsEmpty || !_settings.Enabled) return;
 
+        var drained = new List<AnalyticsEvent>();
         var builder = new StringBuilder();
         while (_queue.TryDequeue(out var recorded))
         {
-            Interlocked.Decrement(ref _queued);
+            drained.Add(recorded);
             builder.Append(JsonSerializer.Serialize(recorded)).Append('\n');
         }
 
         if (builder.Length == 0) return;
 
-        var directory = Path.GetDirectoryName(_spoolPath);
-        if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+        try
+        {
+            var directory = Path.GetDirectoryName(_spoolPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-        TrimSpoolIfOversized();
-        File.AppendAllText(_spoolPath, builder.ToString());
+            TrimSpoolIfOversized();
+            File.AppendAllText(_spoolPath, builder.ToString());
+            Interlocked.Add(ref _queued, -drained.Count);
+        }
+        catch
+        {
+            // Put them back rather than lose them. A transient lock - antivirus, or the second
+            // process that briefly coexists after a restart - would otherwise cost the events
+            // outright, and this is the only chance the crash path gets to write them.
+            foreach (var recorded in drained) _queue.Enqueue(recorded);
+            throw;
+        }
     }
 
     /// <summary>

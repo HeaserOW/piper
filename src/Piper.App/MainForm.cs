@@ -378,11 +378,34 @@ public sealed class MainForm : Form, IMessageFilter
         try
         {
             TrustStore.Install(_ca.RootCertificate);
+        }
+        catch (Exception ex)
+        {
+            AppendLog(Strings.Log.TrustRootFailed(ex.Message));
+            MessageBox.Show(this,
+                Strings.Certificates.StartupInstallFailed(ex.Message),
+                Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return false;
+        }
+
+        // Outside the try above, because the certificate is already in the store by this point.
+        // Reporting failing here must not be reported to the user as the trust install failing, and
+        // must not skip the restart the installed certificate now requires.
+        try
+        {
             Analytics.Track(AnalyticsEvents.CertTrusted, (AnalyticsProperties.Source, "startup"));
 
             // Restarting ends the process without running the shutdown flush, and the timer has not
             // ticked this early in the run, so the event above only survives if it is written now.
             Analytics.FlushToDisk();
+        }
+        catch (Exception reportingFailure)
+        {
+            Debug.WriteLine($"Analytics failed on the trust path: {reportingFailure.GetType().Name}");
+        }
+
+        try
+        {
             AppendLog(Strings.Log.RootTrusted(_ca.RootCertificate.Thumbprint));
             _closeAfterShutdown = true;
             Application.Restart();
@@ -787,7 +810,7 @@ public sealed class MainForm : Form, IMessageFilter
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
-            MessageBox.Show(this, ex.Message, "Piper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, ex.Message, Strings.App.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
