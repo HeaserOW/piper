@@ -7,6 +7,7 @@
     "aboutBody": "Piper\n\nAn HTTP(S) debugging proxy written from scratch on .NET 10.",
     "crashReport": "{{type}}: {{message}}\n\n{{stackTrace}}"
   },
+
   "shortcuts": {
     "ctrlC": "Ctrl+C",
     "ctrlDown": "Ctrl+Down",
@@ -22,17 +23,20 @@
     "zoomOut": "Ctrl+-",
     "zoomReset": "Ctrl+0"
   },
+
   "common": {
     "save": "Save",
     "cancel": "Cancel",
     "allFilesFilter": "All files (*.*)|*.*"
   },
+
   "units": {
     "bytes": "{{value}} B",
     "kilobytes": "{{value, N1}} KB",
     "megabytes": "{{value, N2}} MB",
     "noBytes": "-"
   },
+
   "tabs": {
     "inspectors": "Inspectors",
     "composer": "Composer",
@@ -40,27 +44,32 @@
     "autoResponder": "AutoResponder",
     "log": "Log"
   },
+
   "menu": {
     "file": "&File",
     "openSaz": "&Open SAZ capture...",
     "saveSaz": "&Save selected sessions as SAZ...",
     "clearSessions": "&Clear sessions",
     "exit": "E&xit",
+
     "tools": "&Tools",
     "configurations": "&Configurations...",
     "hosts": "&Hosts...",
     "findSessions": "&Find sessions...",
     "textWizard": "&TextWizard...",
+
     "help": "&Help",
     "searchSyntax": "&Search syntax",
     "checkForUpdates": "Check for &updates...",
     "saveDiagnostics": "Save &diagnostics for a bug report...",
     "about": "&About",
+
     "view": "&View",
     "zoomIn": "Zoom &in",
     "zoomOut": "Zoom &out",
     "resetZoom": "&Reset zoom",
     "resetZoomTo": "&Reset zoom (now {{percent}}%)",
+
     "rules": "&Rules",
     "userAgent": "&User-Agent",
     "userAgentNoOverride": "No override",
@@ -69,6 +78,7 @@
     "unmatchedRequestsPassThrough": "&Unmatched requests pass through",
     "autoResponderRules": "A&utoResponder rules..."
   },
+
   "toolbar": {
     "clear": "Clear",
     "composer": "Composer  (Ctrl+K)",
@@ -77,9 +87,11 @@
     "themeToggle": "{{target}} mode",
     "themeToggleTooltip": "Switch to {{target}} mode"
   },
+
   "statusBar": {
     "starting": "Starting...",
     "pleaseWait": "Please wait",
+
     "capturing": "Capturing",
     "notCapturing": "Not Capturing",
     "notCapturingStatus": "Not capturing",
@@ -87,6 +99,7 @@
     "disablingProxy": "Disabling proxy...",
     "restoringSystemProxy": "Restoring your system proxy...",
     "stoppingCapture": "Stopping capture...",
+
     "captureTooltip": "Click to start or stop proxy capture.",
     "scopeTooltip": "Click to choose which processes are shown.",
     "breakpointsNone": "Breakpoints: None",
@@ -94,21 +107,26 @@
     "noSessions": "0 sessions",
     "selectedSessionTooltip": "Timing and transfer details for the selected session.",
     "zoomTooltip": "UI font size. Ctrl+MouseWheel, or View > Zoom, to change it.",
+
     "httpsOn": "on",
     "httpsOff": "off",
     "listening": "Listening on {{endpoint}}   -   HTTPS decryption {{state}}",
+
     "sessions_one": "{{count, N0}} session",
     "sessions_other": "{{count, N0}} sessions",
     "sessionsSelected_one": "{{selected, N0}} / {{count, N0}} session",
     "sessionsSelected_other": "{{selected, N0}} / {{count, N0}} sessions",
+
     "zoom": "Zoom {{percent}}%"
   },
+
   "captureScopes": {
     "allProcesses": "All Processes",
     "webBrowsers": "Web Browsers",
     "nonBrowsers": "Non-Browsers",
     "hideAll": "Hide All"
   },
+
   "userAgents": {
     "chromeWindows": "Chrome (Windows)",
     "edgeWindows": "Microsoft Edge (Windows)",
@@ -119,6 +137,7 @@
     "promptCaption": "Custom User-Agent",
     "promptLabel": "Use this User-Agent for all proxied requests:"
   },
+
   "sazImport": {
     "openCaption": "Open Fiddler SAZ capture",
     "openFilter": "Fiddler capture archives (*.saz;*.raz)|*.saz;*.raz|$t(common.allFilesFilter)",
@@ -126,26 +145,33 @@
     "saveFilter": "Fiddler SAZ captures (*.saz)|*.saz|$t(common.allFilesFilter)",
     "suggestedFileName": "piper-capture-{{now, yyyyMMdd-HHmmss}}.saz"
   },
+
   "certificates": {
     "startupTrustCaption": "Trust Piper certificate",
     "startupTrustBody": "Piper's HTTPS inspection certificate is not trusted by Windows.\n\nClick OK to install Piper's root certificate for this Windows user and restart Piper. HTTPS capture will then work immediately.\n\nThis is a security-sensitive change: anything with access to Piper's private key can impersonate HTTPS sites to this Windows account. Only continue on a machine you control.",
     "startupInstallFailed": "Piper could not install its root certificate, so capture has not started.\n\n{{message}}",
+
     "alreadyTrusted": "The Piper root certificate is already trusted.",
     "trustCaption": "Trust the Piper root certificate",
     "trustBody": "Add the Piper root certificate to your user's Trusted Root store?\n\nThis is required to inspect HTTPS traffic, and it is a real security tradeoff: anything holding the matching private key - which is stored unencrypted in your user profile - can impersonate any HTTPS site to this Windows account.\n\nOnly do this on a machine you control, and use Tools > Remove trusted root certificate when you are finished.\n\nPrivate key location:\n{{privateKeyPath}}\n\nThumbprint:\n{{thumbprint}}",
+
     "removed_one": "Removed {{count}} Piper root certificate.",
     "removed_other": "Removed {{count}} Piper root certificates.",
+
     "exportCaption": "Export the Piper root certificate",
     "exportFilter": "Certificate (*.cer)|*.cer|$t(common.allFilesFilter)",
     "exportFileName": "Piper-Root.cer"
   },
+
   "updates": {
     "checkCaption": "Check for updates",
     "installCaption": "Piper update",
     "availableCaption": "Piper update available",
+
     "alreadyChecking": "Piper is already checking for updates.",
     "upToDate": "Piper {{version}} is up to date.",
     "availableBody": "Piper {{version}} is available.\n\nDownload and install it now?\n\nThe installer will verify its SHA-256 checksum, then Piper will close so Windows can update it.",
+
     "noResponse": "No response was received from GitHub.",
     "httpStatus": "GitHub returned HTTP {{statusCode}}.",
     "responseTooLarge": "The GitHub release response was too large.",
@@ -154,6 +180,7 @@
     "noAssets": "GitHub's release response has no assets.",
     "missingInstallerOrManifest": "The latest release is missing its installer or SHA-256 manifest.",
     "invalidMetadata": "GitHub returned invalid release metadata.",
+
     "manifestMissingInstaller": "The release's SHA-256 manifest does not contain the installer.",
     "checksumMismatch": "The installer download does not match the release SHA-256 manifest.",
     "downloadCancelled": "The installer download was cancelled.",
@@ -162,17 +189,21 @@
     "installerTooLarge": "The installer download exceeds the 1 GB safety limit.",
     "manifestTooLarge": "The release manifest exceeds the safety limit."
   },
+
   "searchHelp": {
     "caption": "Search syntax",
     "body": "The same query grammar works in Find Sessions, the session filter box and the\nComposer search. Terms are combined with AND.\n\nCtrl+F opens Find Sessions: it marks matching sessions in a colour you pick and\nhides nothing. F3 selects the next match. Ctrl+Shift+F focuses the filter box,\nwhich does hide the sessions that do not match.\n\n  checkout               substring across URL, headers and text bodies\n  \"exact phrase\"         quoted literal\n  /orders\\/[0-9]+/       regular expression\n\n  method:POST            also m:\n  method:GET|POST        alternatives\n  host:api.example.com   also h:\n  path:/v2/users\n  url:token\n  status:404             also s:\n  status:4xx             class shorthand\n  status:>=400           comparisons: > >= < <=\n  status:200..299        ranges\n  ct:json                content type\n\n  header:Authorization   name or value, request or response\n  header:Accept=json     specific header, specific value\n  reqheader: respheader: restrict to one side\n\n  body:user_id           either body\n  req:  resp:            restrict to one side\n\n  size:>100kb            response size; b/kb/mb/gb suffixes\n  reqsize:>0\n  dur:>500               duration in milliseconds\n  id:1234\n\n  is:https  is:http  is:tunnel  is:composed  is:captured\n  is:error  is:ok  is:redirect  is:pending  is:complete\n  is:json  is:xml  is:html  is:image  is:script  is:css\n  is:slow  is:cached  is:body\n\n  -host:cdn.example.com  negate any term with - or !\n\nAn unrecognised field is searched literally, so a pasted URL works as typed.\n\nExample:\n  method:POST host:api status:>=400 -is:image body:\"order\""
   },
+
   "log": {
     "line": "{{time, HH:mm:ss}}  {{message}}",
+
     "rootCaPath": "Root CA: {{path}}",
     "rootCaTrusted": "Root CA is trusted by the current user. HTTPS decryption will work.",
     "rootCaNotTrusted": "Root CA is NOT trusted. HTTPS sites will fail until you use Tools > Configurations > HTTPS.",
     "upstreamValidationOffAtStartup": "Origin server certificate verification is OFF (Configurations > HTTPS). Piper cannot tell a real origin from something impersonating it.",
     "upstreamValidationOffAfterSave": "Origin server certificate verification is OFF. Piper cannot tell a real origin from something impersonating it. Turn it back on when you are done testing.",
+
     "restoredLeftoverProxy": "Restored the system proxy that a previous session left pointing at {{endpoint}}.",
     "startupCaptureOff": "Root certificate is not trusted; startup capture remains off.",
     "rootTrusted": "Root certificate {{thumbprint}} added to the current user's trusted roots.",
@@ -181,36 +212,51 @@
     "rootsRemoved_one": "Removed {{count}} Piper root certificate from the trusted roots.",
     "rootsRemoved_other": "Removed {{count}} Piper root certificates from the trusted roots.",
     "rootExported": "Root certificate exported to {{path}}.",
+
+    "analyticsConsentOn": "Anonymous feedback is on. Turn it off under Tools > Configurations > Privacy.",
+    "analyticsConsentOff": "Anonymous feedback is off. Turn it on under Tools > Configurations > Privacy.",
+    "analyticsOn": "Anonymous feedback is on.",
+    "analyticsOff": "Anonymous feedback is off. The identifiers and any pending reports were discarded.",
+    "analyticsOffIdentifierKept": "Anonymous feedback is off and nothing more will be collected, but the stored identifier could not be removed.",
+    "analyticsUnavailable": "Anonymous feedback could not be changed: reporting failed to start for this session.",
+
     "globalUserAgentCleared": "Global User-Agent override cleared.",
     "globalUserAgentSet": "Global User-Agent rule set to {{name}}.",
+
     "configurationsSaved": "Configurations saved. HTTPS protocol changes apply to new connections.",
     "hostRemappingEnabled": "Host remapping enabled. New origin connections will use the configured mappings.",
     "hostRemappingDisabled": "Host remapping disabled.",
+
     "importedSessions_one": "Imported {{count, N0}} session from {{fileName}}.",
     "importedSessions_other": "Imported {{count, N0}} sessions from {{fileName}}.",
     "importedSessionsToComposer_one": "Imported {{count, N0}} session from {{fileName}} into Composer History.",
     "importedSessionsToComposer_other": "Imported {{count, N0}} sessions from {{fileName}} into Composer History.",
     "sazImportWarning": "SAZ import warning ({{fileName}}): {{warning}}",
     "autoResponderWarning": "AutoResponder: {{warning}}",
+
     "listenFailed": "Could not listen on 127.0.0.1:{{port}} - {{exceptionType}}: {{message}}",
     "portInUseHint": "Another proxy may be using the port. Change it, or stop the other proxy, then press F12.",
     "captureStoppedProxyRestored": "Capture stopped and the previous system proxy settings were restored.",
     "captureStateFailed": "Could not change capture state: {{message}}",
     "captureScopeSet": "Capture scope set to {{scope}}.",
+
     "systemProxySet": "System proxy set to {{endpoint}}.",
     "partialChangeUndoFailed": "Could not undo the partial change: {{message}}",
     "systemProxyFailed": "Could not set the system proxy: {{message}}",
     "systemProxyRestoreFailed": "Could not restore the system proxy: {{message}}",
     "shutdownFailed": "Could not finish shutdown: {{message}}",
+
     "hideHostNotFilterable": "Hide this host: that session's host is not usable as a filter pattern, so nothing was hidden.",
     "hideHostShowOnlyConflict": "Hide this host: {{host}} is hidden in the capture list for this session only. The Filters tab is showing only specific hosts, which cannot also carry an exception, so switch its Hosts list to \"Hide the following Hosts\" to keep it.",
     "hideHostSwitchedToHideMode": "Hide this host: the Filters tab's Hosts list had nothing ticked, so it switched to \"Hide the following Hosts\".",
     "hideHostAdded": "Hide this host: the Filters tab's Hosts list now hides {{host}}. It stays hidden here for this session; the saved list applies when you tick \"Use Filters\" there, or on the next start if it is ticked already.",
+
     "showingTrustPrompt": "Showing the root certificate trust prompt. The main window is disabled, and will ignore dropped files, until it is answered.",
     "noSazToImport": "No SAZ file to import from {{names}}: a capture must be an existing .saz or .raz file.",
     "runningElevated": "Piper is running elevated. Windows blocks drag-and-drop from a normal Explorer window into an elevated one; restart Piper without administrator rights if dropping a .saz file does nothing.",
     "writingDiagnostics": "Writing diagnostics to {{fileName}}.",
     "diagnosticsWriteFailed": "Could not write the diagnostics file: {{message}}",
+
     "ignoredDrop": "Ignored a drop: {{reason}}",
     "dropNoData": "the drop carried no data.",
     "dropNoRecognisedFormat": "the drop carried no recognised format.",
@@ -219,36 +265,37 @@
     "dropRejectedFolder": "{{name}} (a folder)",
     "dropRejectedMissing": "{{name}} (not on disk)",
     "dropRejectedWrongType": "{{name}} (not a .saz or .raz file)",
+
     "updateCheckFailed": "Update check failed: {{message}}",
     "upToDate": "Piper {{version}} is up to date.",
     "updateAvailable": "Piper {{version}} is available.",
     "downloadingInstaller": "Downloading Piper {{version}} installer...",
     "updateDownloadFailed": "Update download failed: {{message}}",
     "installerStarted": "Verified Piper {{version}} installer started. Closing Piper for the update.",
-    "installerStartFailed": "Could not start the verified installer: {{message}}",
-    "analyticsOn": "Anonymous feedback is on.",
-    "analyticsOff": "Anonymous feedback is off. The identifiers and any pending reports were discarded.",
-    "analyticsOffIdentifierKept": "Anonymous feedback is off and nothing more will be collected, but the stored identifier could not be removed.",
-    "analyticsUnavailable": "Anonymous feedback could not be changed: reporting failed to start for this session.",
-    "analyticsConsentOn": "Anonymous feedback is on. Turn it off under Tools > Configurations > Privacy.",
-    "analyticsConsentOff": "Anonymous feedback is off. Turn it on under Tools > Configurations > Privacy."
+    "installerStartFailed": "Could not start the verified installer: {{message}}"
   },
+
   "shutdown": {
     "proxyRestoreFailed": "Piper could not restore the system proxy, so it will remain open.\n\n{{message}}"
   },
+
   "diagnostics": {
     "saveCaption": "Save diagnostics for a bug report",
     "saveFilter": "Zip archives (*.zip)|*.zip|$t(common.allFilesFilter)",
     "saveFileName": "piper-diagnostics-{{now, yyyyMMdd-HHmmss}}.zip",
+
     "writeFailedCaption": "Piper",
     "writeFailedBody": "Piper could not write the diagnostics file.\n\n{{message}}",
+
     "savedCaption": "Diagnostics saved",
     "savedBody": "Saved {{fileName}}.\n\nIt contains {{contents}}: Piper's own log messages and a summary of this machine. No captured requests, responses, bodies, cookies or certificates are included, and nothing is uploaded.\n\nThe log can still name hosts you have filtered, AutoResponder rules you have written and files you have opened, so read it before sending it on.",
+
     "contents": "environment.txt, log.txt and crash.log (when one exists)",
     "summaryNone": "none",
     "summaryAndMore": "{{shown}} and {{more}} more",
     "earlierEntriesOmitted": "[earlier entries omitted]",
     "crashLogUnreadable": "crash log {{fileName}} could not be read: {{message}}",
+
     "environment": "Piper {{version}} on {{os}} ({{architecture}}), .NET {{runtime}}, {{bitness}} process, elevated: {{elevated}}, display scale: {{scale}}%, culture: {{culture}}.",
     "versionUnknown": "unknown",
     "bits64": "64-bit",
@@ -256,8 +303,10 @@
     "yes": "yes",
     "no": "no"
   },
+
   "sessionList": {
     "filterPlaceholder": "Filter  e.g.  status:4xx host:api  -is:image  body:\"order id\"",
+
     "columnId": "#",
     "columnResult": "Result",
     "columnMethod": "Method",
@@ -267,10 +316,12 @@
     "columnProcess": "Process",
     "columnSize": "Size",
     "columnTime": "Time",
+
     "tunnelMethod": "CONNECT",
     "unknownProcess": "-",
     "pendingDuration": "...",
     "duration": "{{milliseconds, N0}} ms",
+
     "resend": "&Resend request",
     "sendToComposer": "Send to &Composer",
     "createAutoResponderRule": "Create AutoResponder r&ule",
@@ -288,10 +339,12 @@
     "hideThisHost": "&Hide this host",
     "sendUrlToTextWizard": "Send URL to Text&Wizard",
     "removeSelected": "&Remove selected",
+
     "saveResponseBodyCaption": "Save response body",
     "saveResponseBodyFailed": "Could not save the response body: {{message}}",
     "saveSessionsFailed": "Could not save the selected sessions: {{message}}",
     "suggestedResponseFileName": "response-{{sessionId}}{{extension}}",
+
     "findCaption": "Find Sessions",
     "findNothingToMatch": "That query has nothing to match.",
     "findNoMatches": "No sessions matched.",
@@ -301,14 +354,18 @@
     "findMarked_other": "{{count, N0}} sessions matched and are marked.",
     "findSelectionCapped": "\nOnly the first {{limit, N0}} are selected."
   },
+
   "findSessions": {
     "caption": "Find Sessions",
     "findButton": "Find Sessions",
+
     "findLabel": "&Find:",
     "searchLabel": "&Search:",
     "markLabel": "&Mark matches with:",
     "selectMatches": "Select matching sessions",
+
     "hint": "The filter box grammar works here too - status:4xx, host:api, \"exact phrase\", /regex/ -\nand matching ignores case. Marks stay until a later find or Clear find marks removes them.",
+
     "yellow": "Yellow",
     "orange": "Orange",
     "red": "Red",
@@ -318,14 +375,17 @@
     "gray": "Gray",
     "noHighlight": "No highlight - remove marks"
   },
+
   "inspector": {
     "request": "Request",
     "response": "Response",
+
     "requestSummary": "Request   {{startLine}}",
     "responseSummary": "Response   {{startLine}}",
     "responseFailed": "Response   FAILED - {{error}}{{hint}}",
     "responseTunnel": "Response   (encrypted tunnel - not decrypted)",
     "responseWaiting": "Response   (waiting)",
+
     "timingStarted": "{{time, HH:mm:ss.fff}}",
     "timingTotal": "   total $t(sessionList.duration)",
     "timingConnect": "   connect $t(sessionList.duration)",
@@ -334,6 +394,7 @@
     "timingDown": "   down {{size}}",
     "timingServer": "   server {{endpoint}}",
     "timingComposed": "   [composed]",
+
     "tabHeaders": "Headers",
     "tabBody": "Body",
     "tabRaw": "Raw",
@@ -342,17 +403,20 @@
     "tabWebForms": "WebForms",
     "tabImage": "Image",
     "tabVideo": "Video",
+
     "columnName": "Name",
     "columnValue": "Value",
     "columnSource": "Source",
     "columnContentType": "Content-Type",
+
     "searchHeaders": "Search headers",
     "searchJson": "Search JSON",
     "findTextOrBytes": "Find text or bytes",
     "hexToggle": "Hex",
     "force": "Force",
-    "previousMatch": "◀",
-    "nextMatch": "▶",
+    "previousMatch": "\u25c0",
+    "nextMatch": "\u25b6",
+
     "copyEntireHeader": "Copy entire header",
     "copyValueOnly": "Copy value only",
     "openWithDefaultBrowser": "Open with default browser",
@@ -366,6 +430,7 @@
     "copySelectionAsHex": "Copy selection as hex",
     "selectAll": "Select all",
     "find": "Find",
+
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "actualSize": "Actual size",
@@ -379,29 +444,36 @@
     "saveAsJpeg": "Save as JPEG...",
     "saveAsWebp": "Save as WebP...",
     "saveImageAs": "Save image as...",
+
     "saveImageCaption": "Save image",
     "saveImageFileName": "response.{{extension}}",
     "saveImageFilter": "PNG image (*.png)|*.png|JPEG image (*.jpg)|*.jpg|WebP image (*.webp)|*.webp",
     "saveImageFailed": "Could not save the image: {{message}}",
+
     "saveFormFieldCaption": "Save form field contents",
     "saveFormFieldFailedCaption": "Could not save form field",
     "formFieldFallbackFileName": "form-field.bin",
     "hexViewerCaption": "Hex - {{fieldName}}",
+
     "noWebFormFields": "No query-string or supported HTML form fields in this request.",
     "webFormFieldCount_one": "{{count, N0}} request parameter  ·  Query string, URL-encoded forms, and multipart forms are shown.",
     "webFormFieldCount_other": "{{count, N0}} request parameters  ·  Query string, URL-encoded forms, and multipart forms are shown.",
     "webFormParseFailed": "Could not parse request parameters: {{message}}",
+
     "transferSummary": "Download {{download}}  ·  decoded content {{decoded}}",
+
     "notAnImageContentType": "Response does not have an image content type.",
     "detectedImage": "Detected image (no Content-Type)",
     "imageDimensions": "{{width, N0}} x {{height, N0}} px\n{{label}}",
     "imageDecodeFailed": "Could not display this response as an image: unsupported or invalid image data.",
     "imageFailed": "Could not display this response as an image: {{message}}",
+
     "notAVideoContentType": "Response does not have a video content type.",
     "detectedVideo": "Detected video (no Content-Type)",
     "videoLoadedNoContentType": "Video loaded from response bytes (no Content-Type)",
     "videoLoading": "{{contentType}}\nLoading the embedded media player...",
     "videoFailed": "Could not load the video player: {{message}}",
+
     "noBody": "(no body)",
     "truncated": "\n\n[truncated]",
     "binaryContent": "[{{bytes, N0}} bytes of binary content - see the Hex tab]",
@@ -412,6 +484,7 @@
     "notAJsonContentType": "Response does not have a JSON content type.",
     "jsonSkipped": "[JSON parsing skipped because the content type does not match]",
     "notValidJson": "[not valid JSON: {{message}}]",
+
     "invalidHex": "invalid hex",
     "notFound": "not found",
     "foundAt": "found 0x{{position, X}}",
@@ -420,13 +493,16 @@
     "matchPosition": "{{index}}/{{total}}",
     "headerMatchCount": "{{visible}}/{{total}}"
   },
+
   "certificateHint": {
     "verifyOriginCertificates": "  ->  If you trust this origin, turn off \"Verify origin server certificates\" in Configurations > HTTPS."
   },
+
   "composer": {
     "historyHeader": "  Composer History",
     "searchPlaceholder": "Search sent requests...",
     "searchTooltip": "Filter your sent requests. Terms are ANDed.\n\nmethod:POST   host:api   status:4xx\nbody:\"user_id\"   header:Authorization\nsize:>100kb   dur:>500\nis:json   -is:image   /v[0-9]+\\/orders/\n\nFull grammar: Help > Search syntax",
+
     "requests_one": "{{count, N0}} request",
     "requests_other": "{{count, N0}} requests",
     "hosts_one": "{{count, N0}} host",
@@ -434,10 +510,12 @@
     "historyRowLabel": "{{method}} {{target}}",
     "historyCount": "{{requests}} · {{hosts}}",
     "historyCountWithWarning": "{{requests}} - {{warning}}",
+
     "removeFromHistory": "&Remove from history",
     "removeGroupOneHost": "everything sent to {{host}}",
     "removeGroupManyHosts": "everything sent to {{count, N0}} hosts",
     "confirmRemoveGroup": "Remove {{what}} from the Composer history?\n\n{{requests}} will be removed. This cannot be undone.",
+
     "urlPlaceholder": "https://example.com/api/v1/resource",
     "defaultHeaders": "Host: example.com\nAccept: application/json",
     "bodyHeader": "  Body",
@@ -445,8 +523,10 @@
     "tabRaw": "Raw",
     "send": "Send",
     "cancelSend": "Cancel",
+
     "enterUrl": "Enter a URL.",
     "invalidUrl": "'{{url}}' is not a valid absolute URL.",
+
     "responseNotSent": "Response   (not sent yet)",
     "responseCancelled": "Response   (cancelled)",
     "loadedSession": "Loaded #{{sessionId}} - edit and press Send (or Enter in the URL box).",
@@ -459,6 +539,7 @@
     "result": "#{{sessionId}}  {{statusCode}}  {{milliseconds, N0}} ms  {{size}}",
     "resultSummary": "Response   {{startLine}}   {{milliseconds, N0}} ms   {{size}}"
   },
+
   "filters": {
     "useFilters": "Use Filters",
     "hostsGroup": "Hosts",
@@ -467,30 +548,36 @@
     "hostPlaceholder": "Host pattern, e.g. *.curseforge.com",
     "addHost": "Add",
     "removeSelectedHost": "Remove selected",
+
     "statusGroup": "Response Status Code",
     "hideSuccess": "Hide success (2xx)",
     "hideNonSuccess": "Hide non-2xx",
     "hideRedirects": "Hide redirects (300-303, 307)",
     "hideAuthDemands": "Hide Authentication demands (401, 407)",
     "hideNotModified": "Hide Not Modified (304)",
+
     "actions": "Actions",
     "runFiltersetNow": "Run Filterset now",
     "showAllSessions": "Show all sessions",
     "loadFilterset": "Load Filterset...",
     "saveFilterset": "Save Filterset...",
     "helpMenu": "Help",
+
     "loadCaption": "Load Filterset",
     "saveCaption": "Save Filterset",
     "filterSetFilter": "Filterset (*.json)|*.json|$t(common.allFilesFilter)",
     "saveFileName": "Filterset.json",
     "loadFailed": "Could not load the filterset: {{message}}",
     "saveFailed": "Could not save the filterset: {{message}}",
+
     "helpCaption": "Filters",
     "helpBody": "Add one or more host patterns, then use their checkboxes to choose which ones apply. Host and Response Status Code edits stay staged, so a partly-typed pattern is never applied on its own.\n\nThe Use Filters checkbox takes effect immediately in both directions. Checking it runs the staged filterset straight away, exactly as Actions > Run Filterset now does; unchecking it stops filtering at once, as does Actions > Show all sessions, which leaves the filterset itself intact.\n\nRight-clicking a session and choosing \"Hide this host\" hides it in the capture list right away and adds it here, so the choice is remembered. Like the rest of the filterset the list applies once \"Use Filters\" is on; untick or remove the entry to undo it. While this list is showing only specific hosts it cannot also carry an exception, so a hide then lasts for the session only and the Log says so.\n\nFiltered-out sessions are dropped rather than hidden, so traffic captured while a filter is applied cannot be recovered by turning the filter off afterwards. Check your host and status choices before enabling the filterset.\n\nFilters compose into the same query grammar as the session grid's own filter box, but apply separately: running a filterset leaves whatever you typed there alone, and both narrow the list together. Editing that box does not turn the filterset off -- use the Use Filters checkbox for that.\n\nOnly Hosts and Response Status Code filters are implemented."
   },
+
   "autoResponder": {
     "enableRules": "Enable rules",
     "passthroughUnmatched": "Unmatched requests pass through to the server",
+
     "actions": "Actions",
     "addRule": "Add rule",
     "editResponse": "Edit Response...",
@@ -501,6 +588,7 @@
     "importRules": "Import rules...",
     "exportRules": "Export rules...",
     "helpMenu": "Help",
+
     "menuAddRule": "&Add rule",
     "menuEditResponse": "&Edit Response...",
     "menuDisableRule": "Disa&ble rule",
@@ -508,11 +596,13 @@
     "menuMoveUp": "Move &up",
     "menuMoveDown": "Move &down",
     "menuRemoveRule": "&Remove rule",
+
     "columnOn": "On",
     "columnMatch": "Match",
     "columnAction": "Action",
     "columnHits": "Hits",
     "columnLastMatch": "Last match",
+
     "labelMatch": "Match",
     "labelAction": "Action",
     "labelBody": "Body",
@@ -520,15 +610,18 @@
     "labelTestUrl": "Test URL",
     "browseButton": "File...",
     "testButton": "Test",
+
     "newRuleDescription": "(new rule)",
     "capturedResponseSaveFailed": "Could not save the captured response: {{message}}",
     "responseSaveFailed": "Piper could not save the response: {{message}}",
     "editResponseCaption": "Edit Response",
+
     "browseTooltip": "Choose a file for this rule to serve.",
     "browseDisabledTooltip": "Select a rule first - this fills in its Action with a file to serve.",
     "testTooltip": "Show which rule wins for this URL, without sending a request.",
     "testEmptyTooltip": "Enter a URL to see which rule would claim it.",
     "testInvalidTooltip": "That is not an absolute http:// or https:// URL.",
+
     "rulesOffPrefix": "Rules are switched off, but: ",
     "noRuleMatches": "{{prefix}}no rule matches, so this request would go to its origin.",
     "testDelay": "  (after {{milliseconds, N0}} ms)",
@@ -540,15 +633,18 @@
     "previewBinary": "{{bytes, N0}} bytes",
     "preview": ", {{text}}",
     "previewTruncated": ", {{text}}...",
+
     "importCaption": "Import AutoResponder rules",
     "exportCaption": "Export AutoResponder rules",
     "rulesFilter": "AutoResponder rules (*.json)|*.json|$t(common.allFilesFilter)",
     "exportFileName": "AutoResponder.json",
     "unreadableRuleSet": "That file does not contain a readable rule set.",
     "chooseFileCaption": "Choose the file to serve",
+
     "helpCaption": "AutoResponder",
     "helpBody": "Rules are checked from the top down; the first enabled rule that matches wins.\n\nMatch\n  orders                     part of the URL, ignoring case\n  EXACT:https://host/path    the whole URL, case-sensitive\n  NOT:orders                 everything the rest does not match\n  REGEX:/v(?<n>\\d+)/items    a regular expression, with ${n} usable in the action\n  METHOD:POST                the request method\n  HEADER:X-Env=staging       a request header\n  URLWithBody:coupon         the URL and the request body together\n  Q:method:POST host:api     Piper's own filter grammar, request fields only\n\nAction\n  *404, *503, *200           answer with that status\n  C:\\mocks\\orders.json       serve that file, content type from its extension\n  *inline                    serve the Body box below\n  *raw:C:\\path\\captured.txt  serve a complete saved response, headers included\n  *redir:https://other/path  send the client a 307 redirect\n  https://other/path         fetch that instead, without telling the client\n  *delay:500                 pause, then carry on. Combine: *delay:500 *503\n  *drop, *reset              kill the connection\n  *CORSPreflightAllow        answer an OPTIONS preflight permissively\n\nRules cannot see traffic inside an undecrypted HTTPS tunnel. If a rule never fires for\nan HTTPS host, check Tools > Configurations > HTTPS."
   },
+
   "responseEditor": {
     "caption": "Edit Response",
     "statusLabel": "Status",
@@ -558,6 +654,7 @@
     "tabJson": "JSON",
     "propertyLabel": "Property",
     "valueLabel": "Value",
+
     "selectAProperty": "Select a property to edit its name or value.",
     "notJson": "Not JSON: {{error}}  -  edit it on the Text tab.",
     "renamed": "Renamed to '{{newName}}'.",
@@ -565,10 +662,13 @@
     "rootOnlyFromTextTab": "The whole document can only be replaced from the Text tab.",
     "incompleteResponse": "That is not a complete HTTP response: {{error}}.\n\nCheck the header lines - each should read \"Name: value\"."
   },
+
   "configurations": {
     "caption": "Configurations",
     "generalTab": "General",
     "httpsTab": "HTTPS",
+    "privacyTab": "Privacy",
+
     "savedForFutureSessions": "These settings are saved for future Piper sessions.",
     "captureOnStartup": "Start capturing when Piper opens",
     "captureScopeLabel": "Capture scope:",
@@ -579,6 +679,7 @@
     "captureScopeNote": "Capture scope controls which sessions are collected and shown.",
     "wheelZoom": "Resize the UI with Ctrl+MouseWheel",
     "wheelZoomNote": "View > Zoom and Ctrl+plus / Ctrl+minus / Ctrl+0 keep working either way, so turning this off only stops the size changing while you scroll.",
+
     "decryptHttps": "Decrypt HTTPS traffic",
     "decryptHttpsNote": "Requires the Piper root certificate to be trusted.",
     "http2Downstream": "Negotiate HTTP/2 with browsers",
@@ -589,18 +690,20 @@
     "http3UpstreamNote": "Origins are tried over QUIC only after advertising HTTP/3 through Alt-Svc.",
     "validateUpstream": "Verify origin server certificates",
     "validateUpstreamNote": "Off accepts any origin certificate (self-signed, expired, hostname mismatch) -- only for testing a known origin. It also hides a real attacker impersonating that origin.",
+
     "certificatesGroup": "Piper root certificate",
     "trustRoot": "Trust root certificate...",
     "removeTrustedRoot": "Remove trusted root",
     "exportRoot": "Export root certificate...",
     "openCertificateFolder": "Open certificate folder",
-    "privacyTab": "Privacy",
+
     "analyticsEnabled": "Send anonymous feedback",
     "analyticsEnabledNote": "Sends which features you use, the type of any error, and the app version, tied only to a random ID stored on this machine, over HTTPS to analyticsnew.overwolf.com. Sending is a web request, so it reveals your IP address and when you used Piper. Never sends captured traffic, URLs, hostnames, headers, bodies, cookies, certificates, or your settings. Turning this off also deletes the identifiers it reports with and discards anything not yet sent.",
     "pendingFeedback": "Pending feedback",
     "pendingFeedbackNote": "Reports wait in a plain text file you can read before they are sent.",
     "openReportsFolder": "Open reports folder"
   },
+
   "hosts": {
     "caption": "Host Remapping",
     "enableRemapping": "Enable remapping of requests from one host to a different host or IP, overriding DNS.",
@@ -608,32 +711,57 @@
     "importWindowsHostsFile": "Import Windows Hosts File",
     "importFailed": "Piper could not read the Windows hosts file:\n{{path}}\n\n{{message}}"
   },
+
+  "analyticsConsent": {
+    "caption": "Help improve Piper",
+    "heading": "Would you like to send anonymous feedback?",
+    "intro": "Piper is easier to improve when we can see which features get used and what breaks. This is entirely optional, and nothing is collected unless you choose to send it.",
+
+    "sentHeading": "What is sent",
+    "sentBullets": "\u2022  Which features you use, and how a capture or certificate step turned out\n\u2022  The type of any error, with the top few stack frames\n\u2022  Piper's version and your Windows version\n\u2022  A random ID stored on this machine, deleted if you turn this off\n\u2022  Sent over HTTPS to analyticsnew.overwolf.com, run by Overwolf",
+
+    "neverHeading": "What is never sent",
+    "neverBullets": "\u2022  Captured traffic of any kind - URLs, hostnames, headers, bodies, cookies\n\u2022  Credentials, certificates, or private keys\n\u2022  File paths, error messages, or anything you typed\n\u2022  Your settings, rules, or saved sessions",
+
+    "notes": "Piper's reporting can only send short words from a fixed list, so captured traffic cannot be included even by mistake. Reports wait in a plain text file you can read before they are sent.\n\n\"Anonymous\" means the reports carry nothing that identifies you. Sending them is still a web request, so it reveals your IP address and when you were using Piper, the same as visiting a website would.",
+    "changeLater": "You can change this at any time under Tools > Configurations > Privacy.",
+
+    "accept": "Send anonymous feedback",
+    "decline": "No thanks"
+  },
+
   "textWizard": {
     "caption": "TextWizard",
     "captionWithCounts": "TextWizard [{{inputLength}} => {{resultLength}} chars]",
+
     "hint": "Encodes and decodes text. Enter text above and choose a transform.",
     "transformLabel": "Transform:",
     "viewBytes": "View bytes",
+
     "saveButton": "Save",
     "saveTooltip": "Save the output to a file",
     "toInputButton": "To Input",
     "toInputTooltip": "Send output to input",
     "closeButton": "Close",
     "closeTooltip": "Close the TextWizard",
+
     "inputAccessibleName": "TextWizard input",
     "outputAccessibleName": "TextWizard output",
     "transformAccessibleName": "TextWizard transform",
     "viewBytesAccessibleName": "TextWizard view bytes",
     "statusAccessibleName": "TextWizard status",
+
     "truncated": "Input was truncated to {{megabytes}} MiB.",
     "detected": "Detected {{transform}}.",
     "atLimit": "Input is at the {{megabytes}} MiB limit.",
     "transformFailed": "{{transform}}: {{message}}",
     "moreBytesNotShown": "... {{bytes}} more bytes not shown.",
+
     "saveCaption": "Save TextWizard output",
     "saveFilter": "Text files (*.txt)|*.txt|$t(common.allFilesFilter)",
     "saveFileName": "textwizard-output.txt",
     "saveFailed": "Piper could not write that file:\n\n{{message}}",
+
     "toBase64": "To Base64",
     "toBase64Url": "To Base64URL",
     "fromBase64": "From Base64",
@@ -655,19 +783,5 @@
     "toSha256": "To SHA256",
     "toSha384": "To SHA384",
     "toSha512": "To SHA512"
-  },
-  "analyticsConsent": {
-    "caption": "Help improve Piper",
-    "heading": "Would you like to send anonymous feedback?",
-    "intro": "Piper is easier to improve when we can see which features get used and what breaks. This is entirely optional, and nothing is collected unless you choose to send it.",
-    "sentHeading": "What is sent",
-    "sentBullets": "•  Which features you use, and how a capture or certificate step turned out\n•  The type of any error, with the top few stack frames\n•  Piper's version and your Windows version\n•  A random ID stored on this machine, deleted if you turn this off\n•  Sent over HTTPS to analyticsnew.overwolf.com, run by Overwolf",
-    "neverHeading": "What is never sent",
-    "neverBullets": "•  Captured traffic of any kind - URLs, hostnames, headers, bodies, cookies\n•  Credentials, certificates, or private keys\n•  File paths, error messages, or anything you typed\n•  Your settings, rules, or saved sessions",
-    "vocabularyNote": "Piper's reporting can only send short words from a fixed list, so captured traffic cannot be included even by mistake. Reports wait in a plain text file you can read before they are sent.",
-    "anonymousNote": "\"Anonymous\" means the reports carry nothing that identifies you. Sending them is still a web request, so it reveals your IP address and when you were using Piper, the same as visiting a website would.",
-    "changeLater": "You can change this at any time under Tools > Configurations > Privacy.",
-    "accept": "Send anonymous feedback",
-    "decline": "No thanks"
   }
 }

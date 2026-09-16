@@ -68,9 +68,7 @@ public sealed class AnalyticsConsentDialog : Form
 
         body.Controls.Add(new Label
         {
-            Text = Strings.AnalyticsConsent.VocabularyNote
-                + "\r\n\r\n"
-                + Strings.AnalyticsConsent.AnonymousNote,
+            Text = Strings.AnalyticsConsent.Notes,
             AutoSize = true,
             MaximumSize = new Size(TextWidth, 0),
             ForeColor = Palette.TextDim,

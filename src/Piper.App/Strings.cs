@@ -855,8 +855,7 @@ internal static class Strings
         public static string SentBullets => I18n.T("analyticsConsent.sentBullets");
         public static string NeverHeading => I18n.T("analyticsConsent.neverHeading");
         public static string NeverBullets => I18n.T("analyticsConsent.neverBullets");
-        public static string VocabularyNote => I18n.T("analyticsConsent.vocabularyNote");
-        public static string AnonymousNote => I18n.T("analyticsConsent.anonymousNote");
+        public static string Notes => I18n.T("analyticsConsent.notes");
         public static string ChangeLater => I18n.T("analyticsConsent.changeLater");
         public static string Accept => I18n.T("analyticsConsent.accept");
         public static string Decline => I18n.T("analyticsConsent.decline");

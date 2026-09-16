@@ -55,7 +55,18 @@ internal static class Program
         }
         finally
         {
-            Analytics.Shutdown();
+            // Guarded for the same reason StartAnalytics is. Shutdown drains the spool, and neither
+            // it nor Dispose filters for everything a path can throw, so without this a failure to
+            // write reports on the way out costs the user a crash as they close the window rather
+            // than a missing report.
+            try
+            {
+                Analytics.Shutdown();
+            }
+            catch (Exception shutdownFailure)
+            {
+                Debug.WriteLine($"Analytics failed to shut down: {shutdownFailure.GetType().Name}");
+            }
         }
     }
 
