@@ -183,7 +183,8 @@ public sealed class ProxyServer : IAsyncDisposable
 
         if (!_options.ShouldDecrypt(host))
         {
-            await BlindTunnelAsync(connect, host, port, clientStream, clientEndpoint, processName, ct).ConfigureAwait(false);
+            await BlindTunnelAsync(connect, host, port, clientStream, clientSocket, clientEndpoint, processName, ct)
+                .ConfigureAwait(false);
             return;
         }
 
@@ -287,7 +288,8 @@ public sealed class ProxyServer : IAsyncDisposable
     }
 
     private async Task BlindTunnelAsync(
-        HttpRequestData connect, string host, int port, Stream clientStream, string clientEndpoint, string processName, CancellationToken ct)
+        HttpRequestData connect, string host, int port, Stream clientStream, Socket clientSocket,
+        string clientEndpoint, string processName, CancellationToken ct)
     {
         var session = new Session
         {
@@ -314,9 +316,7 @@ public sealed class ProxyServer : IAsyncDisposable
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 Connection Established\r\n\r\n", ct).ConfigureAwait(false);
 
             var serverStream = server.GetStream();
-            var up = PumpAsync(clientStream, serverStream, ct);
-            var down = PumpAsync(serverStream, clientStream, ct);
-            await Task.WhenAny(up, down).ConfigureAwait(false);
+            await RelayBothWaysAsync(clientStream, clientSocket, serverStream, server.Client, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -342,8 +342,24 @@ public sealed class ProxyServer : IAsyncDisposable
         await destination.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    /// <summary>Copies bytes one way until either side closes.</summary>
-    private static async Task PumpAsync(Stream from, Stream to, CancellationToken ct)
+    /// <summary>Relays bytes both ways until both directions have finished.</summary>
+    /// <remarks>
+    /// One direction ending must not end the other. TCP connections close one half at a time, and
+    /// a client that has finished sending its request and shut down its send side is still waiting
+    /// for the response. Tearing the pair down on the first direction to finish aborted exactly
+    /// the transfer the connection existed for, mid-body. Each direction instead passes its close
+    /// on, so the peer learns no more data is coming and can finish its own half in its own time.
+    /// </remarks>
+    private static async Task RelayBothWaysAsync(
+        Stream first, Socket? firstSocket, Stream second, Socket? secondSocket, CancellationToken ct)
+    {
+        var forward = PumpAsync(first, second, secondSocket, ct);
+        var backward = PumpAsync(second, first, firstSocket, ct);
+        await Task.WhenAll(forward, backward).ConfigureAwait(false);
+    }
+
+    /// <summary>Copies bytes one way, then passes the end of the stream on to the destination.</summary>
+    private static async Task PumpAsync(Stream from, Stream to, Socket? toSocket, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(32 * 1024);
         try
@@ -364,7 +380,21 @@ public sealed class ProxyServer : IAsyncDisposable
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+            HalfClose(toSocket);
         }
+    }
+
+    /// <summary>
+    /// Tells the destination that nothing further is coming from this direction, without disturbing
+    /// what it may still be sending back. Best effort: a TLS leg has no half-close to offer, and a
+    /// socket already torn down needs none.
+    /// </summary>
+    private static void HalfClose(Socket? socket)
+    {
+        if (socket is null) return;
+        try { socket.Shutdown(SocketShutdown.Send); }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
     }
 
     // -------------------------------------------------------------- request path
@@ -540,9 +570,12 @@ public sealed class ProxyServer : IAsyncDisposable
                 await FlushPendingAsync(upgraded.Reader, clientStream, ct).ConfigureAwait(false);
                 await FlushPendingAsync(clientReader, upgraded.Stream, ct).ConfigureAwait(false);
 
-                var up = PumpAsync(clientStream, upgraded.Stream, ct);
-                var down = PumpAsync(upgraded.Stream, clientStream, ct);
-                await Task.WhenAny(up, down).ConfigureAwait(false);
+                // Sockets are passed only for plaintext legs. Half-closing the TCP socket under a
+                // live TLS session would send a FIN with no close_notify, which a peer is entitled
+                // to read as a truncation attack; those legs end naturally instead.
+                await RelayBothWaysAsync(
+                    clientStream, isHttps ? null : clientSocket,
+                    upgraded.Stream, upgraded.IsTls ? null : upgraded.Client.Client, ct).ConfigureAwait(false);
                 return false;
             }
 

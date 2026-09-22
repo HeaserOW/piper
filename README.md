@@ -191,7 +191,8 @@ targets, so `Invoke-WebRequest -Proxy` would never reach Piper.
 - HTTP/3 to origin servers (from-scratch QPACK and framing over `System.Net.Quic`), off by
   default - see below
 - Chunked de-framing; gzip, deflate and brotli decoding for display
-- WebSocket / `101 Switching Protocols` upgrade pass-through
+- WebSocket / `101 Switching Protocols` upgrade pass-through, relayed in both directions until
+  both sides close rather than until the first one does
 - Virtual-mode session grid that stays responsive under load
 - Request and response inspectors: headers, decoded body, pretty-printed JSON, hex dump
 - Composer with search, raw-request editing, repeat-N, and verbatim header sending

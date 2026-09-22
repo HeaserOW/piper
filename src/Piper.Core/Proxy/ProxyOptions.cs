@@ -24,6 +24,18 @@ public sealed class ProxyOptions
 
     public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(120);
 
+    /// <summary>
+    /// How long to wait for an origin to send anything at all before giving up on a response.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose, and idle-based rather than a budget for the whole response. Long
+    /// polling and server-sent events legitimately go quiet for minutes, and a large download
+    /// legitimately takes them, so only unbroken silence counts. Without this a stalled origin
+    /// held a request open for ever, which reaches the user as an application that has hung with
+    /// nothing to show for it -- the failure this is here to turn into a reported 502.
+    /// </remarks>
+    public TimeSpan UpstreamIdleTimeout { get; set; } = TimeSpan.FromSeconds(300);
+
     /// <summary>Advertise only encodings we can decode, so captured bodies stay readable.</summary>
     public bool NormalizeAcceptEncoding { get; set; } = true;
 

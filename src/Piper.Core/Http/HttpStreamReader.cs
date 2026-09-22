@@ -27,6 +27,17 @@ public sealed class HttpStreamReader : IDisposable
 
     public Stream BaseStream => _stream;
 
+    /// <summary>
+    /// How long a single read may wait for the peer to send something before the connection is
+    /// treated as dead. <see cref="Timeout.InfiniteTimeSpan"/> (the default) waits for ever.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately an idle timeout rather than a budget for the whole message: a legitimate
+    /// multi-gigabyte download is not a stall, and a server-sent-event stream that says nothing
+    /// for a while is not either. What is never legitimate is silence with no end.
+    /// </remarks>
+    public TimeSpan IdleTimeout { get; set; } = Timeout.InfiniteTimeSpan;
+
     /// <summary>Bytes sitting in the buffer that have been read from the socket but not consumed.</summary>
     public int Buffered => _end - _start;
 
@@ -57,7 +68,7 @@ public sealed class HttpStreamReader : IDisposable
             }
         }
 
-        var read = await _stream.ReadAsync(_buffer.AsMemory(_end, _buffer.Length - _end), ct).ConfigureAwait(false);
+        var read = await ReadWithIdleTimeoutAsync(ct).ConfigureAwait(false);
         if (read <= 0)
         {
             EndOfStream = true;
@@ -65,6 +76,29 @@ public sealed class HttpStreamReader : IDisposable
         }
         _end += read;
         return true;
+    }
+
+    private async ValueTask<int> ReadWithIdleTimeoutAsync(CancellationToken ct)
+    {
+        var destination = _buffer.AsMemory(_end, _buffer.Length - _end);
+
+        if (IdleTimeout == Timeout.InfiniteTimeSpan)
+            return await _stream.ReadAsync(destination, ct).ConfigureAwait(false);
+
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idle.CancelAfter(IdleTimeout);
+        try
+        {
+            return await _stream.ReadAsync(destination, idle.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Reported as a parse failure rather than a cancellation so it reaches the caller as a
+            // named reason: a silently abandoned read is indistinguishable from the hang it exists
+            // to prevent.
+            throw new HttpParseException(
+                $"No data received for {IdleTimeout.TotalSeconds:0.#}s; treating the connection as stalled.");
+        }
     }
 
     /// <summary>
