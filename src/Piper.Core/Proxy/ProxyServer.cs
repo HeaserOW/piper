@@ -148,7 +148,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 }
 
                 var keepAlive = await HandleRequestAsync(
-                    request, clientStream, client.Client, slot, clientEndpoint, processName, isHttps: false, ct)
+                    request, clientStream, reader, client.Client, slot, clientEndpoint, processName, isHttps: false, ct)
                     .ConfigureAwait(false);
 
                 if (!keepAlive) break;
@@ -247,7 +247,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 request.Url = BuildTunnelUrl(request, host, port);
 
                 var keepAlive = await HandleRequestAsync(
-                    request, ssl, clientSocket, slot, clientEndpoint, processName, isHttps: true, ct).ConfigureAwait(false);
+                    request, ssl, tlsReader, clientSocket, slot, clientEndpoint, processName, isHttps: true, ct).ConfigureAwait(false);
 
                 if (!keepAlive) break;
             }
@@ -333,6 +333,15 @@ public sealed class ProxyServer : IAsyncDisposable
         }
     }
 
+    /// <summary>Hands whatever a reader has buffered but not consumed to the stream now relaying it.</summary>
+    private static async Task FlushPendingAsync(HttpStreamReader reader, Stream destination, CancellationToken ct)
+    {
+        var pending = reader.TakeBuffered();
+        if (pending.Length == 0) return;
+        await destination.WriteAsync(pending, ct).ConfigureAwait(false);
+        await destination.FlushAsync(ct).ConfigureAwait(false);
+    }
+
     /// <summary>Copies bytes one way until either side closes.</summary>
     private static async Task PumpAsync(Stream from, Stream to, CancellationToken ct)
     {
@@ -377,7 +386,7 @@ public sealed class ProxyServer : IAsyncDisposable
 
     /// <summary>Forwards one request and writes the response back. Returns false when the connection must close.</summary>
     private async Task<bool> HandleRequestAsync(
-        HttpRequestData request, Stream clientStream, Socket clientSocket,
+        HttpRequestData request, Stream clientStream, HttpStreamReader clientReader, Socket clientSocket,
         ConnectionSlot slot, string clientEndpoint, string processName, bool isHttps, CancellationToken ct)
     {
         var session = new Session
@@ -524,13 +533,21 @@ public sealed class ProxyServer : IAsyncDisposable
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
                 _store.NotifyUpdated(session);
 
+                // Both sides are read through a buffering reader, so bytes of the new protocol may
+                // already have been pulled off a socket while the 101 exchange was being parsed.
+                // PumpAsync reads the raw streams and would never see them, so hand them over
+                // first -- otherwise a WebSocket loses whichever frames arrived early.
+                await FlushPendingAsync(upgraded.Reader, clientStream, ct).ConfigureAwait(false);
+                await FlushPendingAsync(clientReader, upgraded.Stream, ct).ConfigureAwait(false);
+
                 var up = PumpAsync(clientStream, upgraded.Stream, ct);
                 var down = PumpAsync(upgraded.Stream, clientStream, ct);
                 await Task.WhenAny(up, down).ConfigureAwait(false);
                 return false;
             }
 
-            var inbound = BuildInboundResponse(response, clientWantsClose);
+            var inbound = BuildInboundResponse(
+                response, HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode), clientWantsClose);
             // This clone's HttpVersion is only ever used for the literal wire bytes about to go
             // out on *this* h1.1 connection -- it must say "HTTP/1.1" no matter what the upstream
             // leg actually spoke (h2, or a legacy 1.0 origin). session.Response above still holds
@@ -587,7 +604,7 @@ public sealed class ProxyServer : IAsyncDisposable
         session.InvalidateSearchIndex();
         _store.NotifyUpdated(session);
 
-        var inbound = BuildInboundResponse(canned, clientWantsClose);
+        var inbound = BuildInboundResponse(canned, bodyIsAuthoritative: true, clientWantsClose);
         inbound.HttpVersion = "HTTP/1.1";
 
         // After BuildInboundResponse, so Content-Length still describes the body a GET would receive.
@@ -687,7 +704,16 @@ public sealed class ProxyServer : IAsyncDisposable
         return outbound;
     }
 
-    internal static HttpResponseData BuildInboundResponse(HttpResponseData response, bool clientWantsClose)
+    /// <param name="bodyIsAuthoritative">
+    /// True when <c>response.Body</c> really is this response's body, so its length can be
+    /// advertised downstream. False when the response is bodiless and its framing headers instead
+    /// describe the body some other request would have received -- a HEAD reply, a 204 or a 304.
+    /// Those headers are the origin's answer and must reach the client untouched: rewriting a HEAD
+    /// reply's Content-Length to 0 tells a client sizing a resource before fetching it that the
+    /// resource is empty.
+    /// </param>
+    internal static HttpResponseData BuildInboundResponse(
+        HttpResponseData response, bool bodyIsAuthoritative, bool clientWantsClose)
     {
         var inbound = response.Clone();
 
@@ -695,8 +721,7 @@ public sealed class ProxyServer : IAsyncDisposable
             inbound.Headers.Remove(header);
 
         // Body was de-chunked during parsing; re-advertise it with a length.
-        var bodyAllowed = inbound.StatusCode is not (204 or 304) && inbound.StatusCode is < 100 or >= 200;
-        if (bodyAllowed)
+        if (bodyIsAuthoritative)
             inbound.Headers.Set("Content-Length", inbound.Body.Length.ToString());
 
         inbound.Headers.Set("Connection", clientWantsClose ? "close" : "keep-alive");

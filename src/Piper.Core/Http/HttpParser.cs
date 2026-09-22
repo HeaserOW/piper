@@ -91,8 +91,11 @@ public static class HttpParser
 
             response.Headers = await ReadHeadersAsync(reader, ct).ConfigureAwait(false);
 
-            // 1xx are interim: consume and read the real response that follows.
-            if (status is >= 100 and < 200) continue;
+            // 1xx are interim: consume and read the real response that follows. 101 is the
+            // exception -- it shares the 1xx range but is final, because it hands the connection
+            // over to another protocol. Skipping it would leave us reading HTTP off a socket that
+            // has just become WebSocket, waiting for a response the peer will never send.
+            if (status is >= 100 and < 200 and not 101) continue;
 
             return (response, DescribeResponseBody(response.Headers, requestMethod, status));
         }
@@ -110,10 +113,7 @@ public static class HttpParser
     /// </remarks>
     public static HttpBodyDescriptor DescribeResponseBody(HeaderCollection headers, string requestMethod, int statusCode)
     {
-        if (string.Equals(requestMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
-            || statusCode is 204 or 304
-            || statusCode is >= 100 and < 200)
-            return HttpBodyDescriptor.None;
+        if (!ResponseCanHaveBody(requestMethod, statusCode)) return HttpBodyDescriptor.None;
 
         if (headers.HasToken("Transfer-Encoding", "chunked")) return HttpBodyDescriptor.Chunked;
 
@@ -121,6 +121,19 @@ public static class HttpParser
 
         return HttpBodyDescriptor.UntilClose;
     }
+
+    /// <summary>
+    /// Whether a response to <paramref name="requestMethod"/> with this status can carry a body at
+    /// all (RFC 9112 6.3, rule 1). False for HEAD and for every status that is defined without one.
+    /// </summary>
+    /// <remarks>
+    /// 101 counts as bodiless deliberately: whatever follows it belongs to the protocol being
+    /// switched to and must not be read, or forwarded, as an HTTP body.
+    /// </remarks>
+    public static bool ResponseCanHaveBody(string requestMethod, int statusCode) =>
+        !string.Equals(requestMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
+        && statusCode is not (204 or 304)
+        && statusCode is < 100 or >= 200;
 
     /// <summary>
     /// Body framing for a request. Identical to <see cref="DescribeResponseBody"/> except that a

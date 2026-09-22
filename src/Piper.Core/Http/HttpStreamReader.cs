@@ -137,16 +137,24 @@ public sealed class HttpStreamReader : IDisposable
     }
 
     /// <summary>Reads until the peer closes the connection. Used for HTTP/1.0-style delimited bodies.</summary>
+    /// <remarks>
+    /// Exceeding <paramref name="limit"/> throws rather than returning what fits. A short read here
+    /// is not a partial answer, it is a wrong one: the caller goes on to advertise the truncated
+    /// length downstream while the rest of the body is still queued on the socket, so the next
+    /// message read from that connection starts mid-body.
+    /// </remarks>
     public async ValueTask<byte[]> ReadToEndAsync(long limit, CancellationToken ct)
     {
         using var ms = new MemoryStream();
         var scratch = ArrayPool<byte>.Shared.Rent(32 * 1024);
         try
         {
-            while (ms.Length < limit)
+            while (true)
             {
                 var n = await ReadAsync(scratch.AsMemory(0, scratch.Length), ct).ConfigureAwait(false);
                 if (n == 0) break;
+                if (ms.Length + n > limit)
+                    throw new HttpParseException($"Body delimited by connection close exceeded the {limit} byte cap.");
                 ms.Write(scratch, 0, n);
             }
         }
@@ -155,6 +163,23 @@ public sealed class HttpStreamReader : IDisposable
             ArrayPool<byte>.Shared.Return(scratch);
         }
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Hands back the bytes already pulled off the socket but not yet consumed, and forgets them.
+    /// </summary>
+    /// <remarks>
+    /// Needed when a connection stops being HTTP and becomes something this reader must not touch
+    /// again -- a 101 handing over to WebSocket. Reads are buffered, so by the time the 101 head
+    /// has been parsed the peer's first frames may already be sitting here. Whoever relays the raw
+    /// stream from now on has to be given these first, or they are silently dropped.
+    /// </remarks>
+    public byte[] TakeBuffered()
+    {
+        if (_start == _end) return [];
+        var pending = _buffer.AsSpan(_start, _end - _start).ToArray();
+        _start = _end = 0;
+        return pending;
     }
 
     /// <summary>Peeks whether more data is available without consuming it. Used to detect idle keep-alive sockets.</summary>

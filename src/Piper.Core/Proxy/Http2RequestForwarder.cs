@@ -64,7 +64,7 @@ internal static class Http2RequestForwarder
                     .BuildResponseAsync(decision.Rule!, decision.Match, request, options.MaxBodyBytes, ct)
                     .ConfigureAwait(false);
 
-                var faked = ProxyServer.BuildInboundResponse(canned, clientWantsClose: true);
+                var faked = ProxyServer.BuildInboundResponse(canned, bodyIsAuthoritative: true, clientWantsClose: true);
                 faked.Headers.Remove("Connection"); // h2 has no such header at all
                 session.Response = faked;
                 session.AutoResponderRule = decision.Description;
@@ -127,7 +127,8 @@ internal static class Http2RequestForwarder
             // the leg they actually travelled: the browser's choice for the request, the real
             // origin's choice for the response. That is the whole point of a debugging proxy that
             // translates between protocol versions.
-            var inbound = ProxyServer.BuildInboundResponse(response, clientWantsClose: true);
+            var inbound = ProxyServer.BuildInboundResponse(
+                response, HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode), clientWantsClose: true);
             inbound.Headers.Remove("Connection"); // downstream-wire plumbing; h2 has no such header at all
             session.Response = inbound;
             session.State = SessionState.Complete;
