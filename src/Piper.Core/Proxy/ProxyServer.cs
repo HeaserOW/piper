@@ -148,7 +148,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 }
 
                 var keepAlive = await HandleRequestAsync(
-                    request, clientStream, client.Client, slot, clientEndpoint, processName, isHttps: false, ct)
+                    request, clientStream, reader, client.Client, slot, clientEndpoint, processName, isHttps: false, ct)
                     .ConfigureAwait(false);
 
                 if (!keepAlive) break;
@@ -183,7 +183,8 @@ public sealed class ProxyServer : IAsyncDisposable
 
         if (!_options.ShouldDecrypt(host))
         {
-            await BlindTunnelAsync(connect, host, port, clientStream, clientEndpoint, processName, ct).ConfigureAwait(false);
+            await BlindTunnelAsync(connect, host, port, clientStream, clientSocket, clientEndpoint, processName, ct)
+                .ConfigureAwait(false);
             return;
         }
 
@@ -247,7 +248,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 request.Url = BuildTunnelUrl(request, host, port);
 
                 var keepAlive = await HandleRequestAsync(
-                    request, ssl, clientSocket, slot, clientEndpoint, processName, isHttps: true, ct).ConfigureAwait(false);
+                    request, ssl, tlsReader, clientSocket, slot, clientEndpoint, processName, isHttps: true, ct).ConfigureAwait(false);
 
                 if (!keepAlive) break;
             }
@@ -287,7 +288,8 @@ public sealed class ProxyServer : IAsyncDisposable
     }
 
     private async Task BlindTunnelAsync(
-        HttpRequestData connect, string host, int port, Stream clientStream, string clientEndpoint, string processName, CancellationToken ct)
+        HttpRequestData connect, string host, int port, Stream clientStream, Socket clientSocket,
+        string clientEndpoint, string processName, CancellationToken ct)
     {
         var session = new Session
         {
@@ -314,9 +316,7 @@ public sealed class ProxyServer : IAsyncDisposable
             await WriteAsciiAsync(clientStream, "HTTP/1.1 200 Connection Established\r\n\r\n", ct).ConfigureAwait(false);
 
             var serverStream = server.GetStream();
-            var up = PumpAsync(clientStream, serverStream, ct);
-            var down = PumpAsync(serverStream, clientStream, ct);
-            await Task.WhenAny(up, down).ConfigureAwait(false);
+            await RelayBothWaysAsync(clientStream, clientSocket, serverStream, server.Client, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -333,8 +333,40 @@ public sealed class ProxyServer : IAsyncDisposable
         }
     }
 
-    /// <summary>Copies bytes one way until either side closes.</summary>
-    private static async Task PumpAsync(Stream from, Stream to, CancellationToken ct)
+    /// <summary>Hands whatever a reader has buffered but not consumed to the stream now relaying it.</summary>
+    private static async Task FlushPendingAsync(HttpStreamReader reader, Stream destination, CancellationToken ct)
+    {
+        var pending = reader.TakeBuffered();
+        if (pending.Length == 0) return;
+        await destination.WriteAsync(pending, ct).ConfigureAwait(false);
+        await destination.FlushAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Relays bytes both ways until both directions have finished.</summary>
+    /// <remarks>
+    /// One direction ending must not end the other. TCP connections close one half at a time, and
+    /// a client that has finished sending its request and shut down its send side is still waiting
+    /// for the response. Tearing the pair down on the first direction to finish aborted exactly
+    /// the transfer the connection existed for, mid-body. Each direction instead passes its close
+    /// on, so the peer learns no more data is coming and can finish its own half in its own time.
+    /// </remarks>
+    internal static async Task RelayBothWaysAsync(
+        Stream first, Socket? firstSocket, Stream second, Socket? secondSocket, CancellationToken ct)
+    {
+        using var both = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var forward = PumpAsync(first, second, secondSocket, both.Token);
+        var backward = PumpAsync(second, first, firstSocket, both.Token);
+
+        // A direction ending toward a leg that cannot be half-closed (a TLS one) has no way to tell
+        // that peer, which would then hold the other direction open for ever. End both instead.
+        var ended = await Task.WhenAny(forward, backward).ConfigureAwait(false);
+        if ((ended == forward ? secondSocket : firstSocket) is null) await both.CancelAsync().ConfigureAwait(false);
+
+        await Task.WhenAll(forward, backward).ConfigureAwait(false);
+    }
+
+    /// <summary>Copies bytes one way, then passes the end of the stream on to the destination.</summary>
+    private static async Task PumpAsync(Stream from, Stream to, Socket? toSocket, CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(32 * 1024);
         try
@@ -355,7 +387,21 @@ public sealed class ProxyServer : IAsyncDisposable
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+            HalfClose(toSocket);
         }
+    }
+
+    /// <summary>
+    /// Tells the destination that nothing further is coming from this direction, without disturbing
+    /// what it may still be sending back. Best effort: a TLS leg has no half-close to offer, and a
+    /// socket already torn down needs none.
+    /// </summary>
+    private static void HalfClose(Socket? socket)
+    {
+        if (socket is null) return;
+        try { socket.Shutdown(SocketShutdown.Send); }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
     }
 
     // -------------------------------------------------------------- request path
@@ -377,7 +423,7 @@ public sealed class ProxyServer : IAsyncDisposable
 
     /// <summary>Forwards one request and writes the response back. Returns false when the connection must close.</summary>
     private async Task<bool> HandleRequestAsync(
-        HttpRequestData request, Stream clientStream, Socket clientSocket,
+        HttpRequestData request, Stream clientStream, HttpStreamReader clientReader, Socket clientSocket,
         ConnectionSlot slot, string clientEndpoint, string processName, bool isHttps, CancellationToken ct)
     {
         var session = new Session
@@ -457,6 +503,13 @@ public sealed class ProxyServer : IAsyncDisposable
         }
 
         var stopwatch = Stopwatch.StartNew();
+
+        // Set just before the first byte of a response is written to the client. Past that point a
+        // failure can no longer be answered with a 502: it would land inside the response already
+        // in flight -- as body bytes, as a corrupt chunk, or, on a close-delimited body, as content
+        // nothing could tell apart from the origin's.
+        var responseStarted = false;
+        var oneShotUpstream = false;
         try
         {
             var outbound = BuildOutboundRequest(request, isUpgrade, _options);
@@ -478,11 +531,17 @@ public sealed class ProxyServer : IAsyncDisposable
             // HTTP/3 first when this origin has advertised it, falling through to TCP on any
             // failure. An upgrade handshake is excluded: 101 hands the connection to another
             // protocol, which has no meaning over QUIC.
-            var response = isUpgrade
+            var overHttp3 = isUpgrade
                 ? null
                 : await Http3Attempt.TryFetchAsync(outbound, request.Url, _options, _altSvc, MarkSent, ct).ConfigureAwait(false);
 
-            if (response is null)
+            // HTTP/3 and HTTP/2 upstream legs still hand back a message read in full; only the
+            // HTTP/1.1 leg leaves its body on the connection to be relayed.
+            var upstreamResponse = overHttp3 is not null
+                ? new UpstreamResponse(overHttp3, HttpBodyDescriptor.None, IsBuffered: true)
+                : default;
+
+            if (overHttp3 is null)
             {
                 var upstream = slot.Connection;
                 if (upstream is not null && (!upstream.Matches(host, port, targetIsTls, _options.HostRemapping.Revision) || !upstream.IsUsable))
@@ -500,18 +559,22 @@ public sealed class ProxyServer : IAsyncDisposable
                 }
 
                 session.ServerEndpoint = upstream.RemoteEndpoint;
-                response = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
+                upstreamResponse = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
 
-                // Http2ClientConnection is one-shot, so an h2 upstream can never be pooled.
-                if (upstream.IsHttp2) slot.Reset();
+                // Http2ClientConnection is one-shot, so an h2 upstream can never be pooled. It is let
+                // go once the body has been relayed off it, not before.
+                oneShotUpstream = upstream.IsHttp2;
             }
 
+            var response = upstreamResponse.Head;
+
+            // Genuinely the time to the first byte now. While the whole message was read before
+            // returning, this measured the time to the last one, so the column reported how long
+            // each download was rather than how responsive the origin was.
             session.TimeToFirstByte = stopwatch.Elapsed - beforeResponse;
             _altSvc.RecordAltSvc(host, response.Headers["Alt-Svc"]);
 
             session.Response = response;
-            session.State = SessionState.Complete;
-            session.Completed = DateTimeOffset.Now;
             session.InvalidateSearchIndex();
 
             // 101 hands the connection over to another protocol (WebSocket, h2c). Relay
@@ -520,35 +583,123 @@ public sealed class ProxyServer : IAsyncDisposable
             // connection the 101 arrived on.
             if (response.StatusCode == 101 && slot.Connection is { } upgraded)
             {
+                session.State = SessionState.Complete;
+                session.Completed = DateTimeOffset.Now;
+                responseStarted = true;
                 await clientStream.WriteAsync(response.ToBytes(), ct).ConfigureAwait(false);
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
                 _store.NotifyUpdated(session);
 
-                var up = PumpAsync(clientStream, upgraded.Stream, ct);
-                var down = PumpAsync(upgraded.Stream, clientStream, ct);
-                await Task.WhenAny(up, down).ConfigureAwait(false);
+                // Both sides are read through a buffering reader, so bytes of the new protocol may
+                // already have been pulled off a socket while the 101 exchange was being parsed.
+                // PumpAsync reads the raw streams and would never see them, so hand them over
+                // first -- otherwise a WebSocket loses whichever frames arrived early.
+                await FlushPendingAsync(upgraded.Reader, clientStream, ct).ConfigureAwait(false);
+                await FlushPendingAsync(clientReader, upgraded.Stream, ct).ConfigureAwait(false);
+
+                // Sockets are passed only for plaintext legs. Half-closing the TCP socket under a
+                // live TLS session would send a FIN with no close_notify, which a peer is entitled
+                // to read as a truncation attack; those legs end naturally instead.
+                await RelayBothWaysAsync(
+                    clientStream, isHttps ? null : clientSocket,
+                    upgraded.Stream, upgraded.IsTls ? null : upgraded.Client.Client, ct).ConfigureAwait(false);
                 return false;
             }
 
-            var inbound = BuildInboundResponse(response, clientWantsClose);
+            var canHaveBody = HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode);
+            var serverWantsClose = response.Headers.HasToken("Connection", "close")
+                                   || response.HttpVersion == "HTTP/1.0";
+
+            // A body still to be read is delimited by the connection closing only when nothing
+            // else frames it, and then neither leg can carry anything after it.
+            var closeAfterBody = !upstreamResponse.IsBuffered
+                                 && upstreamResponse.Body.Framing == HttpBodyFraming.UntilClose;
+
+            // HTTP/1.0 has no chunked coding (RFC 9112 7.1), so a chunked body goes to such a client
+            // de-chunked and delimited by the close instead.
+            var dechunkForClient = !upstreamResponse.IsBuffered
+                                   && upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.StreamEnd
+                                   && request.HttpVersion == "HTTP/1.0";
+            var clientCloseAfterBody = closeAfterBody || dechunkForClient;
+
+            var inbound = BuildInboundResponse(
+                response, upstreamResponse.IsBuffered && canHaveBody,
+                clientWantsClose || clientCloseAfterBody);
+
             // This clone's HttpVersion is only ever used for the literal wire bytes about to go
             // out on *this* h1.1 connection -- it must say "HTTP/1.1" no matter what the upstream
             // leg actually spoke (h2, or a legacy 1.0 origin). session.Response above still holds
             // the original, untouched `response`, so the captured/displayed HttpVersion keeps
             // recording the real upstream protocol.
             inbound.HttpVersion = "HTTP/1.1";
-            await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
-            await clientStream.FlushAsync(ct).ConfigureAwait(false);
+
+            var rechunk = false;
+            if (!upstreamResponse.IsBuffered)
+            {
+                // Framing is carried over from the origin rather than recomputed, because there is
+                // no buffered body left to recompute it from -- and because a client that reports
+                // progress from Content-Length shows a frozen bar for the whole transfer if the
+                // length is dropped, which looks exactly like the hang being fixed here.
+                // A Content-Length is only the framing when nothing overrides it. Beside chunked it
+                // does not describe the bytes relayed, and the next hop may frame on either one, so
+                // RFC 9112 6.1 has a proxy drop it.
+                if (upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose or HttpBodyFraming.StreamEnd)
+                    inbound.Headers.Remove("Content-Length");
+
+                // A body with no length that does not end the connection -- chunked, or an HTTP/2
+                // stream -- has to be chunked for an HTTP/1.1 client to find its end.
+                rechunk = upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.StreamEnd
+                          && !dechunkForClient;
+                if (rechunk) inbound.Headers.Set("Transfer-Encoding", "chunked");
+            }
+
+            responseStarted = true;
+            if (upstreamResponse.IsBuffered)
+            {
+                await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
+                await clientStream.FlushAsync(ct).ConfigureAwait(false);
+
+                // Forwarded whole, but kept only as far as a relayed body would be.
+                response.KeepPrefix(_options.MaxCapturedBodyBytes);
+                session.InvalidateSearchIndex();
+            }
+            else
+            {
+                // Head first, then the body as it arrives. This is the whole point: the client can
+                // start writing the file to disk while the origin is still sending it.
+                await clientStream.WriteAsync(Encoding.Latin1.GetBytes(inbound.HeadAsText()), ct).ConfigureAwait(false);
+                await clientStream.FlushAsync(ct).ConfigureAwait(false);
+                EnterReceivingBody(session, upstreamResponse.Body);
+                _store.NotifyUpdated(session);
+
+                var relayFinished = false;
+                try
+                {
+                    var relayed = await HttpBodyRelay.RelayAsync(
+                        upstreamResponse.BodyReader!, upstreamResponse.Body, clientStream,
+                        rechunk, _options.MaxCapturedBodyBytes, session.ReportBytesReceived, ct).ConfigureAwait(false);
+
+                    response.Body = relayed.Captured;
+                    response.BodyTotalLength = relayed.TotalBytes;
+                    session.InvalidateSearchIndex();
+                    relayFinished = true;
+                }
+                finally
+                {
+                    if (!relayFinished) LeaveReceivingBodyFailed(session, _store);
+                }
+            }
+
+            session.State = SessionState.Complete;
+            session.Completed = DateTimeOffset.Now;
             _store.NotifyUpdated(session);
 
-            var serverWantsClose = response.Headers.HasToken("Connection", "close")
-                                   || response.HttpVersion == "HTTP/1.0";
-            if (serverWantsClose) slot.Reset();
+            if (serverWantsClose || closeAfterBody || oneShotUpstream) slot.Reset();
 
-            return !clientWantsClose && !serverWantsClose;
+            return !clientWantsClose && !serverWantsClose && !clientCloseAfterBody;
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
-                                       or HttpParseException or OperationCanceledException)
+                                       or HttpParseException or Http2ProtocolException or OperationCanceledException)
         {
             session.State = SessionState.Failed;
             session.Error = Describe(ex);
@@ -556,6 +707,14 @@ public sealed class ProxyServer : IAsyncDisposable
             _store.NotifyUpdated(session);
 
             slot.Reset();
+
+            // A reset rather than a FIN, so the client sees the transfer fail. An orderly close
+            // would pass a truncated close-delimited body off as a complete one.
+            if (responseStarted)
+            {
+                AbortConnection(clientSocket);
+                return false;
+            }
 
             try
             {
@@ -587,7 +746,7 @@ public sealed class ProxyServer : IAsyncDisposable
         session.InvalidateSearchIndex();
         _store.NotifyUpdated(session);
 
-        var inbound = BuildInboundResponse(canned, clientWantsClose);
+        var inbound = BuildInboundResponse(canned, bodyIsAuthoritative: true, clientWantsClose);
         inbound.HttpVersion = "HTTP/1.1";
 
         // After BuildInboundResponse, so Content-Length still describes the body a GET would receive.
@@ -687,7 +846,16 @@ public sealed class ProxyServer : IAsyncDisposable
         return outbound;
     }
 
-    internal static HttpResponseData BuildInboundResponse(HttpResponseData response, bool clientWantsClose)
+    /// <param name="bodyIsAuthoritative">
+    /// True when <c>response.Body</c> really is this response's body, so its length can be
+    /// advertised downstream. False when the response is bodiless and its framing headers instead
+    /// describe the body some other request would have received -- a HEAD reply, a 204 or a 304.
+    /// Those headers are the origin's answer and must reach the client untouched: rewriting a HEAD
+    /// reply's Content-Length to 0 tells a client sizing a resource before fetching it that the
+    /// resource is empty.
+    /// </param>
+    internal static HttpResponseData BuildInboundResponse(
+        HttpResponseData response, bool bodyIsAuthoritative, bool clientWantsClose)
     {
         var inbound = response.Clone();
 
@@ -695,8 +863,7 @@ public sealed class ProxyServer : IAsyncDisposable
             inbound.Headers.Remove(header);
 
         // Body was de-chunked during parsing; re-advertise it with a length.
-        var bodyAllowed = inbound.StatusCode is not (204 or 304) && inbound.StatusCode is < 100 or >= 200;
-        if (bodyAllowed)
+        if (bodyIsAuthoritative)
             inbound.Headers.Set("Content-Length", inbound.Body.Length.ToString());
 
         inbound.Headers.Set("Connection", clientWantsClose ? "close" : "keep-alive");
@@ -718,6 +885,34 @@ public sealed class ProxyServer : IAsyncDisposable
             sb.Append(current.GetType().Name).Append(": ").Append(current.Message);
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Marks a session whose head has gone to the client as still receiving its body, when there is
+    /// one to relay. A HEAD, 204, 304 or zero-length response has nothing left to arrive and goes
+    /// straight to complete, so it never flickers through the state.
+    /// </summary>
+    internal static void EnterReceivingBody(Session session, HttpBodyDescriptor body)
+    {
+        if (body.Framing == HttpBodyFraming.None) return;
+        if (body is { Framing: HttpBodyFraming.Length, Length: 0 }) return;
+
+        // Before the state: the UI reads the state first and the expected length after it.
+        session.ExpectedResponseBytes = body.Framing == HttpBodyFraming.Length ? body.Length : -1;
+        session.State = SessionState.ReceivingBody;
+    }
+
+    /// <summary>
+    /// Ends a relay that stopped without finishing. The callers' catch blocks record the failures
+    /// they expect, with the reason; this covers anything else, so a session can never be left
+    /// looking as though its body were still arriving.
+    /// </summary>
+    internal static void LeaveReceivingBodyFailed(Session session, SessionStore store)
+    {
+        if (session.State != SessionState.ReceivingBody) return;
+        session.State = SessionState.Failed;
+        session.Completed ??= DateTimeOffset.Now;
+        store.NotifyUpdated(session);
     }
 
     private static Uri? BuildTunnelUrl(HttpRequestData request, string connectHost, int connectPort)

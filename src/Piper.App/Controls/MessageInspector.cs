@@ -780,19 +780,48 @@ public sealed class MessageInspector : UserControl
             return;
         }
 
+        RenderMessage(message, newMessage: true);
+    }
+
+    /// <summary>The message on display, or null.</summary>
+    public HttpMessage? Message => _message;
+
+    /// <summary>
+    /// Re-renders the message already on display. A relayed body is filled into the message whose
+    /// head was shown while it was arriving, so <see cref="SetMessage"/> would see the same object
+    /// and keep the empty body. The user's tab is left where it is.
+    /// </summary>
+    public void Reload(HttpMessage message, string summary)
+    {
+        _message = message;
+        _summary.Text = summary;
+        UpdateSummaryMetadata(message);
+        _headers.Clear();
+        RenderMessage(message, newMessage: false);
+    }
+
+    /// <summary>Changes only the summary line, for figures that move while a message arrives.</summary>
+    public void SetSummary(string summary)
+    {
+        if (_summary.Text != summary) _summary.Text = summary;
+    }
+
+    private void RenderMessage(HttpMessage message, bool newMessage)
+    {
         foreach (var header in message.Headers)
             _headers.Add((header.Name, header.Value));
         RenderHeaders();
 
         // Bodies can be large and decoding/formatting them used to happen four times for each
         // selection, whether or not their tabs were ever viewed. Clear stale content now and
-        // render only the most useful tab for a newly selected response.
-        var preserveJsonView = CanPreserveJsonView(message);
+        // render only the most useful tab for a newly selected response. A reload never keeps the
+        // JSON tree: it is the same message object, so it would compare equal to its own stale view.
+        var preserveJsonView = newMessage && CanPreserveJsonView(message);
         ClearDeferredViews(preserveJsonView);
         // Carry the rendered marker forward to the newly selected message. This prevents the
         // normal lazy renderer from rebuilding the identical tree (and collapsing it again).
         if (preserveJsonView) _renderedJson = message;
-        if (_showImageViewer) SelectBestTab();
+        if (newMessage && _showImageViewer) SelectBestTab();
         RenderSelectedTab();
     }
 
@@ -1169,11 +1198,16 @@ public sealed class MessageInspector : UserControl
 
     private static string RenderBody(HttpMessage message)
     {
-        if (message.Body.Length == 0) return Strings.Inspector.NoBody;
+        // A body that was relayed but not kept is not an empty one, and must not read as one.
+        if (message.Body.Length == 0)
+            return message.BodyTotalLength > 0
+                ? Strings.Inspector.BodyReleased(message.BodyTotalLength)
+                : Strings.Inspector.NoBody;
 
         var decoded = message.DecodedBody;
         if (!ContentCodec.LooksTextual(message.ContentType, decoded))
-            return Strings.Inspector.BinaryBody(message.Body.Length, message.ContentType);
+            return Strings.Inspector.BinaryBody(message.BodyTotalLength, message.ContentType)
+                   + PartialCaptureNote(message);
 
         string text;
         try { text = message.BodyAsText(decoded); }
@@ -1183,8 +1217,19 @@ public sealed class MessageInspector : UserControl
         if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase) && TryPrettyJson(text, out var pretty))
             text = pretty;
 
-        return text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + Strings.Inspector.Truncated : text;
+        if (text.Length > MaxRenderBytes) text = text[..MaxRenderBytes] + Strings.Inspector.Truncated;
+        return text + PartialCaptureNote(message);
     }
+
+    /// <summary>
+    /// Says so when the displayed bytes are only the start of the body. Without this the inspector
+    /// shows a fragment indistinguishable from a complete small response, which is worse than
+    /// showing nothing -- someone would draw conclusions from a body that was never all there.
+    /// </summary>
+    private static string PartialCaptureNote(HttpMessage message) =>
+        message.IsBodyComplete
+            ? string.Empty
+            : Strings.Inspector.BodyNotFullyCaptured(message.Body.LongLength, message.BodyTotalLength);
 
     private static bool TryPrettyJson(string text, out string pretty)
     {

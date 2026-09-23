@@ -12,11 +12,12 @@ namespace Piper.Core.Proxy;
 /// </summary>
 internal sealed class UpstreamConnection : IDisposable
 {
-    private UpstreamConnection(TcpClient client, Stream stream, string host, int port, bool isTls, bool isHttp2, long remappingRevision)
+    private UpstreamConnection(TcpClient client, Stream stream, string host, int port, bool isTls, bool isHttp2,
+        long remappingRevision, TimeSpan idleTimeout)
     {
         Client = client;
         Stream = stream;
-        Reader = new HttpStreamReader(stream);
+        Reader = new HttpStreamReader(stream) { IdleTimeout = idleTimeout };
         Host = host;
         Port = port;
         IsTls = isTls;
@@ -123,7 +124,8 @@ internal sealed class UpstreamConnection : IDisposable
             stream = ssl;
         }
 
-        return new UpstreamConnection(client, stream, host, port, isTls, isHttp2, remapping.Revision);
+        return new UpstreamConnection(
+            client, stream, host, port, isTls, isHttp2, remapping.Revision, options.UpstreamIdleTimeout);
     }
 
     public void Dispose()

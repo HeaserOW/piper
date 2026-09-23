@@ -5,6 +5,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Piper.Core.Http;
+using Piper.Core.Http2;
 using Piper.Core.Proxy;
 using Piper.Core.Security;
 using Piper.Core.Sessions;
@@ -77,6 +78,34 @@ internal static class Http2Tests
             var results = await Task.WhenAll(tasks);
             foreach (var (i, body) in results)
                 runner.AreEqual($"GET /item/{i}", body, $"request {i} got exactly its own response");
+        });
+
+        await runner.RunAsync("a bodiless response from an HTTP/1.1 origin ends on the h2 HEADERS frame", async () =>
+        {
+            // HEAD, 204 and 304 end after their header section (RFC 9110 6.4.1). Handed a relay
+            // instead, the h2 leg would send HEADERS without END_STREAM and then an empty DATA
+            // frame, where the h1 leg sends nothing at all.
+            foreach (var (method, path) in new[] { ("HEAD", "/hello"), ("GET", "/no-content") })
+            {
+                var request = new HttpRequestData
+                {
+                    Method = method,
+                    RequestTarget = path,
+                    HttpVersion = "HTTP/2",
+                    Url = new Uri($"{originBase}{path}"),
+                };
+                request.Headers.Set("Host", $"127.0.0.1:{origin.Port}");
+
+                var forwardStore = new SessionStore();
+                var response = await Http2RequestForwarder.ForwardAsync(
+                    request, options, forwardStore, new Piper.Core.Http3.AltSvcCache(), "test", "test",
+                    CancellationToken.None);
+
+                runner.IsTrue(response.RelayBody is null && response.Head.Body.Length == 0,
+                    $"{method} {path}: no body is left to relay (status {response.Head.StatusCode})");
+                runner.AreEqual(SessionState.Complete, forwardStore.Snapshot().Single().State,
+                    $"{method} {path}: and the session completes without waiting on one");
+            }
         });
 
         await runner.RunAsync("an untrusted upstream certificate reports why, not just that it was rejected", async () =>
@@ -161,6 +190,84 @@ internal static class Http2Tests
             runner.AreEqual(HttpStatusCode.OK, response.StatusCode, "large response completed instead of stalling");
             runner.AreEqual(size, body.Length, "whole body arrived, not just the first window");
             runner.IsTrue(LargePattern(size).AsSpan().SequenceEqual(body), "body bytes are intact end to end");
+        });
+
+        await runner.RunAsync("an HTTP/2 origin's body is relayed as it arrives, not once it is whole", async () =>
+        {
+            // The shape of a real download from a CDN: a decrypted HTTPS origin negotiates h2. The
+            // origin is held on a gate the test owns, so "the client had the first part before the
+            // origin sent the rest" is program order, not timing. Buffering deadlocks here.
+            var first = LargePattern(16 * 1024);
+            var second = LargePattern(24 * 1024);
+            var gate = new TaskCompletionSource();
+            var released = false;
+            var declareLength = false;
+
+            await using var gated = new TestHttp2Origin(ca.GetCertificateFor("127.0.0.1"), (_, _) =>
+            {
+                var head = new HttpResponseData { StatusCode = 200, ReasonPhrase = "OK" };
+                head.Headers.Set("Content-Type", "application/octet-stream");
+                if (declareLength) head.Headers.Set("Content-Length", (first.Length + second.Length).ToString());
+                return Task.FromResult(new Http2StreamResponse(head, async (destination, ct) =>
+                {
+                    await destination.WriteAsync(first, ct);
+                    await destination.FlushAsync(ct);
+                    await gate.Task.WaitAsync(ct);
+                    await destination.WriteAsync(second, ct);
+                }));
+            });
+
+            using var h1Client = new HttpClient(new HttpClientHandler
+            {
+                Proxy = new WebProxy($"http://127.0.0.1:{proxyPort}"),
+                UseProxy = true,
+                ServerCertificateCustomValidationCallback = (_, cert, _, _) => TrustsRoot(ca.RootCertificate, cert),
+            })
+            { DefaultRequestVersion = HttpVersion.Version11, DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact, Timeout = TimeSpan.FromSeconds(20) };
+
+            foreach (var (leg, legClient) in new[] { ("h1.1", h1Client), ("h2", client) })
+            foreach (var withLength in new[] { true, false })
+            {
+                gate = new TaskCompletionSource();
+                released = false;
+                declareLength = withLength;
+                var what = $"{leg} client, {(withLength ? "with" : "without")} a content-length";
+
+                using var response = await legClient.GetAsync($"https://127.0.0.1:{gated.Port}/drip",
+                    HttpCompletionOption.ResponseHeadersRead);
+
+                // What a downloader draws its progress bar from: carried over when the origin gave
+                // it, rather than lost to re-framing.
+                runner.AreEqual(withLength ? first.Length + second.Length : -1L,
+                    response.Content.Headers.ContentLength ?? -1L, $"{what}: the length is as the origin gave it");
+
+                await using var body = await response.Content.ReadAsStreamAsync();
+                var got = new byte[first.Length];
+                await body.ReadExactlyAsync(got).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                runner.IsTrue(!released, $"{what}: the first part arrives while the origin is still gated");
+                runner.IsTrue(first.AsSpan().SequenceEqual(got), $"{what}: byte-exact");
+
+                // The session the client leg was served through, while its body is still arriving.
+                var session = store.Snapshot().Last(s => s.Path == "/drip");
+                runner.IsTrue(await Poll.UntilAsync(() => session.BytesReceived >= first.Length),
+                    $"{what}: the bytes relayed so far are counted ({session.BytesReceived})");
+                runner.AreEqual(SessionState.ReceivingBody, session.State, $"{what}: the session is receiving its body");
+                runner.AreEqual(withLength ? (long)(first.Length + second.Length) : -1L, session.ExpectedResponseBytes,
+                    $"{what}: expecting the length the origin gave");
+                runner.IsTrue(withLength ? session.ResponseProgress is > 0 and < 1 : session.ResponseProgress is null,
+                    $"{what}: with progress only when the length is known ({session.ResponseProgress})");
+
+                released = true;
+                gate.SetResult();
+
+                var rest = new byte[second.Length];
+                await body.ReadExactlyAsync(rest).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                runner.IsTrue(second.AsSpan().SequenceEqual(rest), $"{what}: the rest follows");
+                runner.AreEqual(-1, body.ReadByte(), $"{what}: and the body ends there");
+                runner.IsTrue(await Poll.UntilAsync(() => session.State == SessionState.Complete),
+                    $"{what}: and the session completes ({session.State})");
+                runner.AreEqual((long)(first.Length + second.Length), session.ResponseSize, $"{what}: at the whole size");
+            }
         });
 
         await runner.RunAsync("a request body larger than the 64KB connection window survives both h2 legs", async () =>
@@ -324,6 +431,9 @@ internal static class Http2Tests
         private static HttpResponseData BuildResponse(HttpRequestData request)
         {
             var path = request.Url?.PathAndQuery ?? request.RequestTarget;
+            if (path.StartsWith("/no-content", StringComparison.Ordinal))
+                return new HttpResponseData { StatusCode = 204, ReasonPhrase = "No Content" };
+
             var body = request.Body.Length > 0
                 ? $"{request.Method} {path} body={Encoding.UTF8.GetString(request.Body)}"
                 : $"{request.Method} {path}";

@@ -8,6 +8,13 @@ public static class HttpParser
     private const long MaxBodyBytes = 256L * 1024 * 1024;
 
     /// <summary>
+    /// How many interim (1xx) responses may precede the real one before the exchange is treated as
+    /// hostile. RFC 9112 puts no limit on them, so without a cap an origin can hold a connection
+    /// and its reader open indefinitely while sending nothing else.
+    /// </summary>
+    private const int MaxInterimResponses = 8;
+
+    /// <summary>
     /// Reads a request head and body. Returns null when the connection closed cleanly
     /// before a new request started (the normal end of a keep-alive session).
     /// </summary>
@@ -34,44 +41,131 @@ public static class HttpParser
 
         request.Headers = await ReadHeadersAsync(reader, ct).ConfigureAwait(false);
         request.Url = ResolveUrl(request);
-        request.Body = await ReadBodyAsync(reader, request.Headers, isRequest: true, statusCode: 0, ct).ConfigureAwait(false);
+        request.Body = await ReadBodyAsync(reader, DescribeRequestBody(request.Headers), ct).ConfigureAwait(false);
         return request;
     }
 
     /// <summary>Reads a response head and body. <paramref name="requestMethod"/> is needed because HEAD has no body.</summary>
     public static async Task<HttpResponseData> ReadResponseAsync(HttpStreamReader reader, string requestMethod, CancellationToken ct)
     {
-        string? line;
-        do
-        {
-            line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-            if (line is null) throw new HttpParseException("Connection closed before a response was received.");
-        } while (line.Length == 0);
-
-        var parts = line.Split(' ', 3);
-        if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var status))
-            throw new HttpParseException($"Malformed status line: '{Truncate(line)}'");
-
-        var response = new HttpResponseData
-        {
-            HttpVersion = parts[0],
-            StatusCode = status,
-            ReasonPhrase = parts.Length > 2 ? parts[2] : string.Empty,
-        };
-
-        response.Headers = await ReadHeadersAsync(reader, ct).ConfigureAwait(false);
-
-        // 1xx are interim: consume and read the real response that follows.
-        if (status is >= 100 and < 200)
-            return await ReadResponseAsync(reader, requestMethod, ct).ConfigureAwait(false);
-
-        var hasBody = !(string.Equals(requestMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
-                        || status is 204 or 304);
-
-        if (hasBody)
-            response.Body = await ReadBodyAsync(reader, response.Headers, isRequest: false, statusCode: status, ct).ConfigureAwait(false);
-
+        var (response, body) = await ReadResponseHeadAsync(reader, requestMethod, ct).ConfigureAwait(false);
+        response.Body = await ReadBodyAsync(reader, body, ct).ConfigureAwait(false);
         return response;
+    }
+
+    /// <summary>
+    /// Reads a response head and works out how its body is framed, leaving the body itself on the
+    /// reader. Interim 1xx responses are consumed and the real response that follows is returned.
+    /// </summary>
+    /// <remarks>
+    /// This is the point at which a caller still has a free choice between buffering the body and
+    /// relaying it onward as it arrives; see <see cref="HttpBodyDescriptor"/>.
+    /// </remarks>
+    public static async Task<(HttpResponseData Head, HttpBodyDescriptor Body)> ReadResponseHeadAsync(
+        HttpStreamReader reader, string requestMethod, CancellationToken ct)
+    {
+        // A loop rather than recursion: an origin that never stops sending 1xx would otherwise grow
+        // the stack until the process dies on an uncatchable StackOverflowException.
+        for (var interim = 0; ; interim++)
+        {
+            if (interim > MaxInterimResponses)
+                throw new HttpParseException($"More than {MaxInterimResponses} interim responses before a final one.");
+
+            string? line;
+            do
+            {
+                line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+                if (line is null) throw new HttpParseException("Connection closed before a response was received.");
+            } while (line.Length == 0);
+
+            var parts = line.Split(' ', 3);
+            if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var status))
+                throw new HttpParseException($"Malformed status line: '{Truncate(line)}'");
+
+            var response = new HttpResponseData
+            {
+                HttpVersion = parts[0],
+                StatusCode = status,
+                ReasonPhrase = parts.Length > 2 ? parts[2] : string.Empty,
+            };
+
+            response.Headers = await ReadHeadersAsync(reader, ct).ConfigureAwait(false);
+
+            // 1xx are interim: consume and read the real response that follows. 101 is the
+            // exception -- it shares the 1xx range but is final, because it hands the connection
+            // over to another protocol. Skipping it would leave us reading HTTP off a socket that
+            // has just become WebSocket, waiting for a response the peer will never send.
+            if (status is >= 100 and < 200 and not 101) continue;
+
+            return (response, DescribeResponseBody(response.Headers, requestMethod, status));
+        }
+    }
+
+    /// <summary>
+    /// Body framing for a response, per RFC 9112 6.3: a bodiless status or a HEAD request means no
+    /// body at all; Transfer-Encoding wins over Content-Length; a response with neither is
+    /// delimited by the connection closing.
+    /// </summary>
+    /// <remarks>
+    /// The bodiless cases are decided first, ahead of every framing header. A 304 or a HEAD reply
+    /// routinely carries a Content-Length describing the body a GET would have returned, and
+    /// reading that many bytes would consume the next response off a keep-alive connection.
+    /// </remarks>
+    public static HttpBodyDescriptor DescribeResponseBody(HeaderCollection headers, string requestMethod, int statusCode)
+    {
+        if (!ResponseCanHaveBody(requestMethod, statusCode)) return HttpBodyDescriptor.None;
+
+        if (headers.HasToken("Transfer-Encoding", "chunked")) return HttpBodyDescriptor.Chunked;
+
+        if (!headers.Contains("Content-Length")) return HttpBodyDescriptor.UntilClose;
+
+        // RFC 9112 6.3 rule 5: a length that is unreadable, or that differs between two copies of
+        // the header, is an error rather than a response to be read until close. Falling back would
+        // relay the header Piper had just distrusted to a client that may well frame on it.
+        if (headers.GetValues("Content-Length").Distinct(StringComparer.Ordinal).Count() == 1
+            && TryReadContentLength(headers, out var length))
+            return HttpBodyDescriptor.OfLength(length);
+
+        throw new HttpParseException("Response has an invalid or conflicting Content-Length.");
+    }
+
+    /// <summary>
+    /// Whether a response to <paramref name="requestMethod"/> with this status can carry a body at
+    /// all (RFC 9112 6.3, rule 1). False for HEAD and for every status that is defined without one.
+    /// </summary>
+    /// <remarks>
+    /// 101 counts as bodiless deliberately: whatever follows it belongs to the protocol being
+    /// switched to and must not be read, or forwarded, as an HTTP body.
+    /// </remarks>
+    public static bool ResponseCanHaveBody(string requestMethod, int statusCode) =>
+        !string.Equals(requestMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
+        && statusCode is not (204 or 304)
+        && statusCode is < 100 or >= 200;
+
+    /// <summary>
+    /// Body framing for a request. Identical to <see cref="DescribeResponseBody"/> except that a
+    /// request with no framing headers has no body at all: a request can never be delimited by the
+    /// connection closing, because the client still has to read the answer on it.
+    /// </summary>
+    public static HttpBodyDescriptor DescribeRequestBody(HeaderCollection headers)
+    {
+        if (headers.HasToken("Transfer-Encoding", "chunked")) return HttpBodyDescriptor.Chunked;
+
+        if (TryReadContentLength(headers, out var length)) return HttpBodyDescriptor.OfLength(length);
+
+        return HttpBodyDescriptor.None;
+    }
+
+    /// <summary>
+    /// Reads the Content-Length. <c>NumberStyles.None</c> refuses a sign, whitespace and the other
+    /// leniencies that would let "+5" or " 5 " mean one length here and another to the next hop.
+    /// </summary>
+    private static bool TryReadContentLength(HeaderCollection headers, out long length)
+    {
+        length = 0;
+        var value = headers["Content-Length"];
+        return value is not null
+               && long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out length);
     }
 
     private static async Task<HeaderCollection> ReadHeadersAsync(HttpStreamReader reader, CancellationToken ct)
@@ -99,28 +193,30 @@ public static class HttpParser
         }
     }
 
-    /// <summary>
-    /// Body framing per RFC 9112 6.3: Transfer-Encoding wins over Content-Length; a
-    /// response with neither is delimited by connection close; a request with neither
-    /// has no body at all.
-    /// </summary>
-    private static async Task<byte[]> ReadBodyAsync(
-        HttpStreamReader reader, HeaderCollection headers, bool isRequest, int statusCode, CancellationToken ct)
+    /// <summary>Buffers a whole body according to a framing already worked out from the headers.</summary>
+    /// <remarks>
+    /// The counterpart to <see cref="ReadResponseHeadAsync"/> for a caller that wants the message
+    /// in hand rather than relayed onward -- the Composer, and the legs that cannot stream yet.
+    /// </remarks>
+    public static async Task<byte[]> ReadBodyAsync(
+        HttpStreamReader reader, HttpBodyDescriptor body, CancellationToken ct)
     {
-        if (headers.HasToken("Transfer-Encoding", "chunked"))
-            return await ReadChunkedAsync(reader, ct).ConfigureAwait(false);
-
-        var contentLength = headers["Content-Length"];
-        if (contentLength is not null && long.TryParse(contentLength, NumberStyles.None, CultureInfo.InvariantCulture, out var length))
+        switch (body.Framing)
         {
-            if (length > MaxBodyBytes) throw new HttpParseException($"Body of {length} bytes exceeds the {MaxBodyBytes} byte cap.");
-            return await reader.ReadExactlyAsync((int)length, ct).ConfigureAwait(false);
+            case HttpBodyFraming.None:
+                return [];
+
+            case HttpBodyFraming.Chunked:
+                return await ReadChunkedAsync(reader, ct).ConfigureAwait(false);
+
+            case HttpBodyFraming.Length:
+                if (body.Length > MaxBodyBytes)
+                    throw new HttpParseException($"Body of {body.Length} bytes exceeds the {MaxBodyBytes} byte cap.");
+                return await reader.ReadExactlyAsync((int)body.Length, ct).ConfigureAwait(false);
+
+            default:
+                return await reader.ReadToEndAsync(MaxBodyBytes, ct).ConfigureAwait(false);
         }
-
-        if (isRequest) return [];
-
-        // Response with no framing headers: read until close.
-        return await reader.ReadToEndAsync(MaxBodyBytes, ct).ConfigureAwait(false);
     }
 
     private static async Task<byte[]> ReadChunkedAsync(HttpStreamReader reader, CancellationToken ct)
@@ -134,7 +230,6 @@ public static class HttpParser
             // Strip any chunk extensions after ';'.
             var semi = sizeLine.IndexOf(';');
             var sizeText = (semi >= 0 ? sizeLine[..semi] : sizeLine).Trim();
-            if (sizeText.Length == 0) continue;
 
             if (!int.TryParse(sizeText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var chunkSize))
                 throw new HttpParseException($"Bad chunk size: '{Truncate(sizeText)}'");
@@ -142,11 +237,7 @@ public static class HttpParser
             if (chunkSize == 0)
             {
                 // Consume trailers up to the terminating blank line.
-                while (true)
-                {
-                    var trailer = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-                    if (trailer is null || trailer.Length == 0) break;
-                }
+                await SkipTrailersAsync(reader, ct).ConfigureAwait(false);
                 return body.ToArray();
             }
 
@@ -156,8 +247,10 @@ public static class HttpParser
             var chunk = await reader.ReadExactlyAsync(chunkSize, ct).ConfigureAwait(false);
             body.Write(chunk, 0, chunk.Length);
 
-            // Each chunk is followed by its own CRLF.
-            await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            // Each chunk is followed by its own CRLF, and by nothing else: a chunk that runs on
+            // past its declared size means the two ends disagree about where it stops.
+            if (await reader.ReadLineAsync(ct).ConfigureAwait(false) is not "")
+                throw new HttpParseException("Chunk not terminated by CRLF.");
         }
     }
 
@@ -181,5 +274,21 @@ public static class HttpParser
         return Uri.TryCreate($"{scheme}://{host}{target}", UriKind.Absolute, out var url) ? url : null;
     }
 
-    private static string Truncate(string value) => value.Length <= 120 ? value : value[..120] + "...";
+    /// <summary>
+    /// Reads and discards a chunked body's trailer section. Bounded like a header block, or an
+    /// origin could keep sending trailer lines for ever and the body would never end.
+    /// </summary>
+    internal static async Task SkipTrailersAsync(HttpStreamReader reader, CancellationToken ct)
+    {
+        for (var lines = 0; ; lines++)
+        {
+            if (lines > MaxTrailerLines) throw new HttpParseException("Too many trailer lines.");
+            var trailer = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            if (trailer is null || trailer.Length == 0) return;
+        }
+    }
+
+    private const int MaxTrailerLines = 200;
+
+    internal static string Truncate(string value) => value.Length <= 120 ? value : value[..120] + "...";
 }

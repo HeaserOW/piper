@@ -15,8 +15,9 @@ public sealed class Http2Settings
     public int? MaxHeaderListSize { get; set; }
 
     /// <summary>What Piper advertises on both legs: push disabled (Piper never pushes and doesn't
-    /// want to model pushed streams as sessions), a generous initial window (Piper always fully
-    /// buffers a message before forwarding it, so there is no value in real backpressure), and a
+    /// want to model pushed streams as sessions), a generous initial window (a response body is
+    /// relayed with each frame read only once the one before it has been passed on, so what paces
+    /// an origin is how fast the client drains, not this window), and a
     /// concurrent-stream cap matching common browser defaults. Frame size and header table size
     /// stay at the RFC defaults -- Piper's own HPACK encoder never uses the dynamic table, and
     /// deviating from the default only risks surprising a well-behaved peer.</summary>

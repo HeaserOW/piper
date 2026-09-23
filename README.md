@@ -193,8 +193,11 @@ targets, so `Invoke-WebRequest -Proxy` would never reach Piper.
   translates between h1.1 and h2 on either side and records which protocol each leg actually used
 - HTTP/3 to origin servers (from-scratch QPACK and framing over `System.Net.Quic`), off by
   default - see below
+- Response bodies relayed as they arrive rather than buffered whole, so a download starts at
+  once, a stream that never ends can be captured, and size is not a limit - see below
 - Chunked de-framing; gzip, deflate and brotli decoding for display
-- WebSocket / `101 Switching Protocols` upgrade pass-through
+- WebSocket / `101 Switching Protocols` upgrade pass-through, relayed in both directions until
+  both sides close rather than until the first one does
 - Virtual-mode session grid that stays responsive under load
 - Request and response inspectors: headers, decoded body, pretty-printed JSON, hex dump
 - Composer with search, raw-request editing, repeat-N, and verbatim header sending
@@ -312,12 +315,81 @@ from-scratch like the rest. QPACK uses the static table only and advertises a ze
 dynamic table, which RFC 9204 explicitly permits and which removes the encoder/decoder instruction
 streams entirely.
 
+## Large and long-lived responses
+
+Piper forwards a response body to the client as it arrives from the origin, rather than reading the
+whole message first. What the origin used to frame the body is what Piper sends: a `Content-Length`
+is passed through unchanged, a chunked body stays chunked. Nothing is re-framed, because a client
+that draws a progress bar from `Content-Length` has nothing to draw with if the length is dropped.
+
+The exceptions are the cases where passing the framing on would be wrong. A `Content-Length` sent
+beside chunked coding is dropped, since chunked wins and the length describes nothing that is
+relayed. An HTTP/1.0 client, which has no chunked coding, gets a chunked body de-chunked and ended by
+the connection closing. A response whose `Content-Length` is unreadable or contradicts itself is
+refused with a 502 rather than relayed. If the origin fails once the body has started, the client's
+connection is reset (an HTTP/2 stream gets `RST_STREAM`), so a cut-off download is never mistaken
+for a finished one.
+
+It holds whichever protocol either leg speaks. From the origin, an HTTP/1.1 body is relayed as it
+is read and an HTTP/2 body DATA frame by DATA frame -- which matters, because a decrypted HTTPS
+origin, a CDN in particular, usually negotiates HTTP/2. Towards the client, an HTTP/2 body is framed
+into DATA frames as the bytes arrive, and a sender that exhausts the peer flow-control window
+resumes on the grant that gives it more rather than on the next tick of a timer.
+
+The one exception is an HTTP/3 origin, which is off by default (`EnableHttp3Upstream`): its
+response is still read whole before any of it is forwarded, so none of the three points below holds
+for it. What the capture keeps of such a body is bounded by `MaxCapturedBodyBytes` all the same.
+
+This matters in three ways:
+
+- **A download starts immediately.** Buffering meant the client saw nothing until the last byte had
+  arrived, so a large file was indistinguishable from a hang, and a downloader with its own stall
+  timeout would give up part way through a transfer that was working.
+- **A response that never ends can be captured at all.** Server-sent events, long polling and live
+  media never complete, so a proxy that waits for the end of the message waits for ever.
+- **Size is not a limit.** There is no ceiling on what can pass through.
+
+A body still arriving is shown as such in the grid. Its Result reads `↓ 200` instead of `200`, its
+Time counts up, and its Size grows as the bytes come in. When the origin announced a
+`Content-Length`, Size reads `3.0/8.0 MB` over a fill showing how far through the body is; without
+one there is nothing to measure against, so there is no fill, only the count. The status bar and
+the inspector give the long form, `3.00 MB of 8.00 MB (37%)`, and `is:inflight` finds these
+sessions. The figures are read at the grid's refresh rate rather than reported per chunk, so a
+download costs no more than repainting its row. A body that fails part way keeps the size that did
+arrive.
+
+What *is* bounded is how much of a body is kept for inspection, by two limits:
+
+| | |
+|---|---|
+| `MaxCapturedBodyBytes` | how much of a single body is retained (default 32 MB) |
+| `RetainedBodyBudgetBytes` | how many body bytes are kept across all sessions (default 512 MB) |
+
+Past the first, the rest of the body is relayed but not kept. Past the second, the oldest sessions
+give up their bodies -- the sessions themselves stay, with their URL, status, timings and size,
+because what a capture is mostly used for is seeing that a request happened at all. A session count
+is not a bound on memory: twenty thousand sessions is nothing if they are API calls and several
+gigabytes if they are downloads.
+
+Nothing reports a partly kept body as a small one. The grid and the inspector show the length that
+crossed the wire, the inspector says how much of it was retained, and a `.saz` export marks a
+partial body with `X-Piper-Body-Truncated` rather than writing the fragment as though it were the
+whole thing. Bounding what is retained is what lets the relay itself be unconditional: a modpack
+install fetching hundreds of files would otherwise spend its time collecting garbage instead of
+proxying.
+
+The trade this makes is that a body can no longer be edited on its way back to the client. Piper
+has never offered that -- the AutoResponder replaces responses rather than editing real ones -- so
+there is nothing to give up here, which is why there is no buffering mode to switch between.
+
 ## Not implemented
 
 - HTTP/2 or HTTP/3 in the Composer (raw/verbatim sending stays HTTP/1.1-only - the mandatory
   pseudo-headers and forbidden headers are structurally at odds with "what you type is what goes
   on the wire")
 - HTTP/3 stream reuse (one QUIC connection per request) and server push
+- Relaying an HTTP/3 origin's response as it arrives (it is read whole first; see
+  [Large and long-lived responses](#large-and-long-lived-responses))
 - Breakpoints, and tampering with a response the origin actually sent (the AutoResponder replaces
   responses, it does not edit real ones on their way back)
 - Upstream proxy chaining

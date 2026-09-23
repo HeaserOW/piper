@@ -19,8 +19,17 @@ public sealed class SessionListView : UserControl
     // Keep the compact fields stable while using surplus space for values that tend to be long.
     // The order matches the real columns (and SessionSortColumn); a zero means the column stays at
     // its minimum width. These are floors: MeasureColumnMinimums raises them to fit real values.
-    private static readonly int[] ColumnBaseWidths = [52, 55, 62, 170, 300, 130, 110, 80, 70];
+    // Size is wide enough for a body still arriving, "123.4/456.7 MB", and Time for one that has
+    // been arriving for minutes, "123,456 ms", since both now count up in place.
+    private static readonly int[] ColumnBaseWidths = [52, 55, 62, 170, 300, 130, 110, 112, 88];
     private static readonly int[] ColumnGrowthWeights = [0, 0, 0, 3, 6, 2, 2, 0, 0];
+    private const int SizeColumn = 7;
+    private const int TimeColumn = 8;
+
+    // The fill behind a body still arriving: the accent, faint enough to leave the text readable on
+    // every row background, with a solid edge along the bottom so its length reads at a glance.
+    private const int ProgressFillAlpha = 70;
+    private const int ProgressEdgeHeight = 2;
 
     /// <summary>Room each cell loses to <c>Rectangle.Inflate(bounds, -5, 0)</c> in the draw, plus slack.</summary>
     private const int CellPadding = 12;
@@ -42,6 +51,8 @@ public sealed class SessionListView : UserControl
     private readonly SolidBrush _markBrush = new(FindSessionsDialog.DefaultMarkColour);
     private readonly SolidBrush _headerBrush = new(Palette.SurfaceAlt);
     private readonly Pen _headerBorderPen = new(Palette.Border);
+    private readonly SolidBrush _progressFillBrush = new(Color.FromArgb(ProgressFillAlpha, Palette.Accent));
+    private readonly SolidBrush _progressEdgeBrush = new(Palette.Accent);
 
     private readonly List<Session> _visible = new(1024);
     // Find marks, keyed by session id rather than row index: rows are rebuilt from the store
@@ -61,18 +72,13 @@ public sealed class SessionListView : UserControl
     private SessionSortColumn? _sortColumn;
     private bool _sortDescending;
 
-    // The selected session as the inspector last saw it, so a response landing on the row that is
-    // already selected can be reported even though the selection itself did not change.
-    private ReportedSelection _reportedSelection;
-
     public event EventHandler<Session?>? SelectionChanged;
 
     /// <summary>
-    /// Raised when the session that is already selected changes underneath the selection: its
-    /// response arrives, it completes or it fails. <see cref="SelectionChanged"/> only fires for a
-    /// different session, so without this the inspector kept saying "waiting for response".
+    /// Raised on the refresh tick for the selected session while it is in flight, so its figures
+    /// can move, and once more when its state changes, with <see cref="SessionRefresh.Reload"/> set.
     /// </summary>
-    public event EventHandler<Session>? SelectedSessionUpdated;
+    public event EventHandler<SessionRefresh>? SelectedSessionRefreshed;
 
     /// <summary>Raised whenever the capture-list selection set changes.</summary>
     public event EventHandler? SelectedSessionsChanged;
@@ -134,8 +140,8 @@ public sealed class SessionListView : UserControl
         _list.Columns.Add(Strings.SessionList.ColumnPath, 300, HorizontalAlignment.Left);
         _list.Columns.Add(Strings.SessionList.ColumnType, 130, HorizontalAlignment.Left);
         _list.Columns.Add(Strings.SessionList.ColumnProcess, 110, HorizontalAlignment.Left);
-        _list.Columns.Add(Strings.SessionList.ColumnSize, 80, HorizontalAlignment.Right);
-        _list.Columns.Add(Strings.SessionList.ColumnTime, 70, HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnSize, ColumnBaseWidths[SizeColumn], HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnTime, ColumnBaseWidths[TimeColumn], HorizontalAlignment.Right);
         DarkListView.AddFillerColumn(_list);
         _list.Resize += (_, _) => ExpandColumnsToView();
 
@@ -188,21 +194,33 @@ public sealed class SessionListView : UserControl
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 150 };
         _refreshTimer.Tick += (_, _) =>
         {
-            if (!_refreshPending)
+            if (_refreshPending)
+            {
+                _refreshPending = false;
+                Rebuild();
+            }
+            else
             {
                 // The ListView raises no scroll event, so a user scrolling away from the newest row
                 // with no traffic arriving is noticed here. One item-rect message per tick.
                 UpdateFollowButton();
-                return;
             }
-            _refreshPending = false;
-            Rebuild();
+
+            // A body's progress is read here rather than announced by the relay: a download raises
+            // no event per chunk, so all it costs the grid is repainting the rows on screen that are
+            // still receiving. Every other tick: repainting a screenful of owner-drawn rows costs
+            // about as much however little of each row changes, and three updates a second is
+            // plenty for a count and a fill.
+            _progressTick = !_progressTick;
+            if (_progressTick) InvalidateReceivingRows();
+            RefreshSelectedSession();
         };
         _refreshTimer.Start();
     }
 
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private volatile bool _refreshPending;
+    private bool _progressTick;
     private bool _suppressSelectionChanged;
     private bool _expandingColumns;
 
@@ -315,6 +333,49 @@ public sealed class SessionListView : UserControl
     private void RequestRefresh() => _refreshPending = true;
 
     /// <summary>
+    /// Repaints the on-screen rows whose body is still arriving, so their size, fill and time move.
+    /// Only the visible rows are looked at, and nothing is repainted once none are receiving.
+    /// </summary>
+    private void InvalidateReceivingRows()
+    {
+        var count = Math.Min(_visible.Count, _list.VirtualListSize);
+        if (count == 0 || !_list.IsHandleCreated || !_list.Visible) return;
+
+        var bottom = _list.ClientSize.Height;
+        for (var index = Math.Max(_list.TopItem?.Index ?? 0, 0); index < count; index++)
+        {
+            var bounds = _list.GetItemRect(index);
+            if (bounds.Top >= bottom) break;
+            if (_visible[index].State == SessionState.ReceivingBody) _list.Invalidate(bounds);
+        }
+    }
+
+    // The selected session as the inspector last saw it, so a change of state can be told apart
+    // from a figure that is merely moving.
+    private Session? _refreshedSession;
+    private SessionState _refreshedState;
+
+    private void RaiseSelectionChanged(Session? session)
+    {
+        _refreshedSession = session;
+        if (session is not null) _refreshedState = session.State;
+        SelectionChanged?.Invoke(this, session);
+    }
+
+    private void RefreshSelectedSession()
+    {
+        if (SelectedSession is not { } session || !ReferenceEquals(session, _refreshedSession)) return;
+
+        var state = session.State;
+        var reload = state != _refreshedState;
+        _refreshedState = state;
+
+        if (reload || state is SessionState.Pending or SessionState.SendingRequest
+                or SessionState.AwaitingResponse or SessionState.ReceivingBody)
+            SelectedSessionRefreshed?.Invoke(this, new SessionRefresh(session, reload));
+    }
+
+    /// <summary>
     /// Uses extra horizontal room for the columns where request details are most likely to be
     /// truncated. At narrower widths the original minimum widths are retained, so the grid still
     /// has the usual horizontal scrolling behavior instead of crushing the compact fields.
@@ -364,8 +425,8 @@ public sealed class SessionListView : UserControl
             null,
             null,
             null,
-            [Strings.Units.Kilobytes(1023.9), Strings.Units.Megabytes(999.9)],
-            [Strings.SessionList.Duration(99_999), Strings.SessionList.PendingDuration],
+            [Strings.Units.Kilobytes(1023.9), Strings.Units.Megabytes(999.9), Strings.Units.ProgressMegabytes(123.4, 456.7)],
+            [Strings.SessionList.Duration(123_456), Strings.SessionList.PendingDuration],
         ];
 
         var widths = new int[ColumnBaseWidths.Length];
@@ -564,7 +625,7 @@ public sealed class SessionListView : UserControl
         _list.EnsureVisible(indices[0]);
         _primarySelectedSession = FirstSelectedSession();
         if (!ReferenceEquals(previousSession, SelectedSession))
-            RaiseSelectionChanged();
+            RaiseSelectionChanged(SelectedSession);
 
         // The selection was replaced wholesale and the grid's own event was suppressed above, so
         // notify unconditionally: a same-sized selection of different rows is still a change.
@@ -674,9 +735,7 @@ public sealed class SessionListView : UserControl
         // transient selection events. Do not blank and immediately rebuild the inspector for
         // that bookkeeping operation; notify only if its primary session truly changed.
         if (!ReferenceEquals(previousSession, SelectedSession))
-            RaiseSelectionChanged();
-        else if (SelectedSession is { } selected && _reportedSelection != ReportedSelection.Of(selected))
-            ReportSelectedSessionUpdated(selected);
+            RaiseSelectionChanged(SelectedSession);
         if (previousSelectionCount != _list.SelectedIndices.Count)
             SelectedSessionsChanged?.Invoke(this, EventArgs.Empty);
 
@@ -754,30 +813,6 @@ public sealed class SessionListView : UserControl
     private int TopIndex() =>
         _list.IsHandleCreated && _list.VirtualListSize > 0 ? _list.TopItem?.Index ?? -1 : -1;
 
-    private void RaiseSelectionChanged()
-    {
-        _reportedSelection = ReportedSelection.Of(SelectedSession);
-        SelectionChanged?.Invoke(this, SelectedSession);
-    }
-
-    private void ReportSelectedSessionUpdated(Session session)
-    {
-        _reportedSelection = ReportedSelection.Of(session);
-        SelectedSessionUpdated?.Invoke(this, session);
-    }
-
-    /// <summary>
-    /// The parts of a session the inspector shows that proxy threads fill in after it is listed.
-    /// References, not copies: a new response or request object is exactly what "changed" means.
-    /// </summary>
-    private readonly record struct ReportedSelection(
-        Session? Session, object? Request, object? Response, SessionState State, DateTimeOffset? Completed)
-    {
-        public static ReportedSelection Of(Session? session) => session is null
-            ? default
-            : new(session, session.Request, session.Response, session.State, session.Completed);
-    }
-
     private void ApplyVisibilityFiltersInPlace()
     {
         if (_query.IsEmpty && _visibilityFilter is null && _filtersetFilter is null && _sessionHiddenHostsFilter is null) return;
@@ -819,15 +854,19 @@ public sealed class SessionListView : UserControl
         }
 
         var session = _visible[e.ItemIndex];
+        var receiving = session.State == SessionState.ReceivingBody;
         var item = new ListViewItem(session.Id.ToString());
-        item.SubItems.Add(session.StatusText);
+        item.SubItems.Add(receiving ? Strings.SessionList.ReceivingResult(session.StatusText) : session.StatusText);
         item.SubItems.Add(session.IsTunnel ? Strings.SessionList.TunnelMethod : session.Method);
         item.SubItems.Add(session.Host);
         item.SubItems.Add(session.Path + session.Query);
         item.SubItems.Add(Format.ShortContentType(session.ContentType));
         item.SubItems.Add(string.IsNullOrEmpty(session.ProcessName) ? Strings.SessionList.UnknownProcess : session.ProcessName);
-        item.SubItems.Add(Format.Size(session.ResponseSize));
-        item.SubItems.Add(session.Completed is null
+        item.SubItems.Add(receiving && session.ExpectedResponseBytes > 0
+            ? Format.SizeProgress(session.BytesReceived, session.ExpectedResponseBytes)
+            : Format.Size(session.ResponseSize));
+        // A body still arriving counts up; one still waiting for its head just says it is waiting.
+        item.SubItems.Add(session.Completed is null && !receiving
             ? Strings.SessionList.PendingDuration
             : Strings.SessionList.Duration(session.Duration.TotalMilliseconds));
         item.SubItems.Add(string.Empty); // filler column
@@ -909,6 +948,9 @@ public sealed class SessionListView : UserControl
         e.Graphics.FillRectangle(
             selected ? _selectionBrush : marked ? _markBrush : _surfaceBrush, e.Bounds);
 
+        if (e.ColumnIndex == SizeColumn && session?.ResponseProgress is { } progress)
+            DrawProgress(e.Graphics, e.Bounds, progress);
+
         var colour = session is null
             ? Palette.Text
             : Palette.ForStatus(session);
@@ -932,6 +974,27 @@ public sealed class SessionListView : UserControl
 
         TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? string.Empty, Palette.Mono,
             Rectangle.Inflate(e.Bounds, -5, 0), colour, flags);
+    }
+
+    /// <summary>
+    /// Shades the part of the Size cell a body has covered, under its text. A translucent overlay
+    /// rather than a themed bar, so one rule reads on the plain, selected and marked backgrounds in
+    /// either theme, and the figure on top of it stays legible.
+    /// </summary>
+    private void DrawProgress(Graphics graphics, Rectangle cell, double progress)
+    {
+        var width = (int)(cell.Width * progress);
+        if (width <= 0) return;
+
+        var accent = Palette.Accent;
+        if (_progressEdgeBrush.Color != accent)
+        {
+            _progressEdgeBrush.Color = accent;
+            _progressFillBrush.Color = Color.FromArgb(ProgressFillAlpha, accent);
+        }
+
+        graphics.FillRectangle(_progressFillBrush, cell.X, cell.Y, width, cell.Height);
+        graphics.FillRectangle(_progressEdgeBrush, cell.X, cell.Bottom - ProgressEdgeHeight, width, ProgressEdgeHeight);
     }
 
     private void OnListMouseDown(object? sender, MouseEventArgs e)
@@ -1176,7 +1239,7 @@ public sealed class SessionListView : UserControl
             _primarySelectedSession = FirstSelectedSession();
 
         if (!ReferenceEquals(previousSession, _primarySelectedSession))
-            RaiseSelectionChanged();
+            RaiseSelectionChanged(_primarySelectedSession);
         SelectedSessionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -1213,7 +1276,7 @@ public sealed class SessionListView : UserControl
 
         _primarySelectedSession = item.Tag as Session;
         if (!ReferenceEquals(previousSession, SelectedSession))
-            RaiseSelectionChanged();
+            RaiseSelectionChanged(SelectedSession);
         SelectedSessionsChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -1351,7 +1414,12 @@ public sealed class SessionListView : UserControl
             _markBrush.Dispose();
             _headerBrush.Dispose();
             _headerBorderPen.Dispose();
+            _progressFillBrush.Dispose();
+            _progressEdgeBrush.Dispose();
         }
         base.Dispose(disposing);
     }
 }
+
+/// <summary>The selected session on a refresh tick, and whether its state changed since the last.</summary>
+public readonly record struct SessionRefresh(Session Session, bool Reload);

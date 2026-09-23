@@ -18,9 +18,26 @@ public sealed class SessionStore
     private Func<Session, bool>? _captureFilter;
     private Func<Session, bool>? _completedSessionFilter;
     private int _firstSession;
+    private long _retainedBodyBytes;
+
+    // What each retained session was last counted at. A proxied session is admitted before its
+    // response exists, so its body has to be counted again whenever it is updated.
+    private readonly Dictionary<Session, long> _countedBodyBytes = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>Oldest sessions are dropped once the cap is hit. 0 disables trimming.</summary>
     public int Capacity { get; set; } = 20_000;
+
+    /// <summary>
+    /// How many bytes of captured bodies to keep across all retained sessions. Once past it, the
+    /// oldest sessions give up their bodies. 0 disables the budget.
+    /// </summary>
+    /// <remarks>
+    /// A count of sessions is not a bound on memory: twenty thousand sessions is nothing if they
+    /// are API calls and several gigabytes if they are downloads. Only the bodies are released --
+    /// the sessions stay, keeping their URL, status, timings and the length they weighed on the
+    /// wire, because what a capture is mostly used for is seeing that a request happened at all.
+    /// </remarks>
+    public long RetainedBodyBudgetBytes { get; set; } = 512L * 1024 * 1024;
 
     public event EventHandler<SessionEventArgs>? SessionAdded;
     public event EventHandler<SessionEventArgs>? SessionUpdated;
@@ -86,11 +103,18 @@ public sealed class SessionStore
                     // reached. Clear discarded references immediately, then compact the prefix in
                     // one amortized operation after enough additions have accumulated.
                     var discardEnd = _firstSession + discardCount;
-                    for (var i = _firstSession; i < discardEnd; i++) _sessions[i] = null!;
+                    for (var i = _firstSession; i < discardEnd; i++)
+                    {
+                        Uncount(_sessions[i]);
+                        _sessions[i] = null!;
+                    }
                     _firstSession = discardEnd;
                     CompactDiscardedPrefixIfNeeded();
                 }
             }
+
+            Recount(session);
+            ReleaseOldestBodiesIfOverBudget();
         }
         SessionAdded?.Invoke(this, new SessionEventArgs(session));
     }
@@ -105,6 +129,11 @@ public sealed class SessionStore
             {
                 _pendingAdmission.Remove(session);
                 wasDeferred = true;
+            }
+            else if (_countedBodyBytes.ContainsKey(session))
+            {
+                Recount(session);
+                ReleaseOldestBodiesIfOverBudget();
             }
         }
 
@@ -158,6 +187,8 @@ public sealed class SessionStore
         {
             _sessions.Clear();
             _firstSession = 0;
+            _retainedBodyBytes = 0;
+            _countedBodyBytes.Clear();
             _pendingAdmission.Clear();
         }
         Cleared?.Invoke(this, EventArgs.Empty);
@@ -168,10 +199,54 @@ public sealed class SessionStore
         lock (_gate)
         {
             CompactDiscardedPrefix();
-            _sessions.RemoveAll(s => predicate(s));
+            _sessions.RemoveAll(s =>
+            {
+                if (!predicate(s)) return false;
+                Uncount(s);
+                return true;
+            });
         }
         Cleared?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>
+    /// Releases the bodies of the oldest sessions until the total retained is within budget.
+    /// </summary>
+    /// <remarks>
+    /// Oldest first, because the session someone is about to look at is almost always a recent one.
+    /// A session whose body has been released keeps reporting the length it weighed on the wire,
+    /// so nothing starts claiming a large download was empty.
+    /// </remarks>
+    private void ReleaseOldestBodiesIfOverBudget()
+    {
+        if (RetainedBodyBudgetBytes <= 0 || _retainedBodyBytes <= RetainedBodyBudgetBytes) return;
+
+        for (var i = _firstSession; i < _sessions.Count && _retainedBodyBytes > RetainedBodyBudgetBytes; i++)
+        {
+            var older = _sessions[i];
+            if (_countedBodyBytes.GetValueOrDefault(older) == 0) continue;
+
+            if (older.Request is { } request) request.ReleaseBody();
+            if (older.Response is { } response) response.ReleaseBody();
+            older.InvalidateSearchIndex();
+            Recount(older);
+        }
+    }
+
+    private void Recount(Session session)
+    {
+        var now = BodyBytesOf(session);
+        _retainedBodyBytes += now - _countedBodyBytes.GetValueOrDefault(session);
+        _countedBodyBytes[session] = now;
+    }
+
+    private void Uncount(Session session)
+    {
+        if (_countedBodyBytes.Remove(session, out var counted)) _retainedBodyBytes -= counted;
+    }
+
+    private static long BodyBytesOf(Session session) =>
+        (session.Request?.Body.LongLength ?? 0) + (session.Response?.Body.LongLength ?? 0);
 
     private void CompactDiscardedPrefixIfNeeded()
     {

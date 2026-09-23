@@ -166,9 +166,7 @@ public sealed class MainForm : Form, IMessageFilter
         EnableSazFileDrop(this);
 
         _sessionList.SelectionChanged += (_, session) => _inspector.Show(session);
-        // The selected row filling in (its response arriving, or it failing) is not a selection
-        // change, but the inspector has to see it or it stays on "waiting for response".
-        _sessionList.SelectedSessionUpdated += (_, session) => _inspector.Show(session);
+        _sessionList.SelectedSessionRefreshed += (_, refresh) => _inspector.Refresh(refresh.Session, refresh.Reload);
         _sessionList.SelectedSessionsChanged += (_, _) => QueueSessionsStatusUpdate();
         _inspector.TimingChanged += (_, _) =>
         {

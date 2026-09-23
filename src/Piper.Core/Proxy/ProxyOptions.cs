@@ -24,6 +24,29 @@ public sealed class ProxyOptions
 
     public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(120);
 
+    /// <summary>
+    /// How long to wait for an origin to send anything at all before giving up on a response.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose, and idle-based rather than a budget for the whole response. Long
+    /// polling and server-sent events legitimately go quiet for minutes, and a large download
+    /// legitimately takes them, so only unbroken silence counts. Without this a stalled origin
+    /// held a request open for ever, which reaches the user as an application that has hung with
+    /// nothing to show for it -- the failure this is here to turn into a reported 502.
+    /// </remarks>
+    public TimeSpan UpstreamIdleTimeout { get; set; } = TimeSpan.FromSeconds(300);
+
+    /// <summary>
+    /// How much of a response body to keep for inspection. Relaying is never refused because of
+    /// it: a larger body still reaches the client whole, only the retained copy stops.
+    /// </summary>
+    /// <remarks>
+    /// Raise it to capture more, at the cost of memory. The default is chosen to be far larger
+    /// than anything worth reading in an inspector while still being small enough that hundreds of
+    /// captured downloads cannot push the process into collecting garbage instead of proxying.
+    /// </remarks>
+    public long MaxCapturedBodyBytes { get; set; } = 32L * 1024 * 1024;
+
     /// <summary>Advertise only encodings we can decode, so captured bodies stay readable.</summary>
     public bool NormalizeAcceptEncoding { get; set; } = true;
 

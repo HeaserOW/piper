@@ -59,21 +59,44 @@ public sealed class InspectorPanel : UserControl
         _request.SetMessage(session.Request,
             session.Request is null ? Strings.Inspector.Request : Strings.Inspector.RequestSummary(session.Request.StartLine));
 
-        if (session.Response is not null)
+        ShowResponse(session, reload: false);
+        SetTimingText(BuildTimingLine(session));
+    }
+
+    /// <summary>
+    /// Brings the session already on display up to date while it is in flight: its figures while
+    /// they move, and, when <paramref name="reload"/> says its state has changed, the response it
+    /// has now. The request never changes once sent, so it is left alone.
+    /// </summary>
+    public void Refresh(Session session, bool reload)
+    {
+        ShowResponse(session, reload);
+        SetTimingText(BuildTimingLine(session));
+    }
+
+    private void ShowResponse(Session session, bool reload)
+    {
+        // State first: the proxy publishes the response before the state that describes it.
+        var state = session.State;
+        if (session.Response is not { } response)
         {
-            _response.SetMessage(session.Response, Strings.Inspector.ResponseSummary(session.Response.StartLine));
-        }
-        else
-        {
-            _response.SetMessage(null, session.State switch
+            _response.SetMessage(null, state switch
             {
                 SessionState.Failed => Strings.Inspector.ResponseFailed(session.Error, CertificateFailureHint.For(session.Error)),
                 SessionState.Tunnel => Strings.Inspector.ResponseTunnel,
                 _ => Strings.Inspector.ResponseWaiting,
             });
+            return;
         }
 
-        SetTimingText(BuildTimingLine(session));
+        var summary = state == SessionState.ReceivingBody
+            ? Strings.Inspector.ResponseReceiving(response.StartLine,
+                Format.ProgressDetail(session.BytesReceived, session.ExpectedResponseBytes))
+            : Strings.Inspector.ResponseSummary(response.StartLine);
+
+        if (!ReferenceEquals(_response.Message, response)) _response.SetMessage(response, summary);
+        else if (reload) _response.Reload(response, summary);
+        else _response.SetSummary(summary);
     }
 
     private void SetTimingText(string value)
@@ -95,7 +118,9 @@ public sealed class InspectorPanel : UserControl
             sb.Append(Strings.Inspector.TimingTimeToFirstByte(ttfb.TotalMilliseconds));
 
         sb.Append(Strings.Inspector.TimingUp(FormatBytes(session.RequestSize)));
-        sb.Append(Strings.Inspector.TimingDown(FormatBytes(session.ResponseSize)));
+        sb.Append(Strings.Inspector.TimingDown(session.State == SessionState.ReceivingBody
+            ? Format.ProgressDetail(session.BytesReceived, session.ExpectedResponseBytes)
+            : FormatBytes(session.ResponseSize)));
 
         if (session.ServerEndpoint is { } endpoint) sb.Append(Strings.Inspector.TimingServer(endpoint));
         if (session.IsComposed) sb.Append(Strings.Inspector.TimingComposed);

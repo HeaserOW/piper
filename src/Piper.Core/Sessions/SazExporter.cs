@@ -40,19 +40,31 @@ public static class SazExporter
         return exportable.Length;
     }
 
+    /// <summary>
+    /// Marks a message whose body was only partly kept. A reader that does not know the header
+    /// still gets a self-consistent message, and one that reads it is not misled into treating a
+    /// fragment as the whole body -- mitmproxy's HAR export writes streamed bodies as zero bytes,
+    /// indistinguishable from empty, which is the mistake being avoided here.
+    /// </summary>
+    private const string TruncationHeader = "X-Piper-Body-Truncated";
+
     private static byte[] SerializeRequest(HttpRequestData request)
     {
         // A SAZ reader cannot infer the original scheme from an origin-form request target.
         // Emit the full URL when Piper has resolved it, while retaining the original target as a
         // safe fallback for malformed or incomplete captures.
         var target = request.Url?.AbsoluteUri ?? request.RequestTarget;
-        return SerializeMessage($"{request.Method} {target} {request.HttpVersion}", request.Headers, request.Body);
+        return SerializeMessage(
+            $"{request.Method} {target} {request.HttpVersion}", request.Headers, request.Body,
+            request.IsBodyComplete ? 0 : request.BodyTotalLength);
     }
 
     private static byte[] SerializeResponse(HttpResponseData response) =>
-        SerializeMessage(response.StartLine, response.Headers, response.Body);
+        SerializeMessage(response.StartLine, response.Headers, response.Body,
+            response.IsBodyComplete ? 0 : response.BodyTotalLength);
 
-    private static byte[] SerializeMessage(string startLine, HeaderCollection originalHeaders, byte[] body)
+    private static byte[] SerializeMessage(
+        string startLine, HeaderCollection originalHeaders, byte[] body, long truncatedFrom)
     {
         // Piper stores de-chunked bodies. Make the archive internally consistent rather than
         // claiming a chunked transfer while writing plain body bytes.
@@ -61,6 +73,9 @@ public static class SazExporter
         if (hadChunkedTransfer) headers.Remove("Transfer-Encoding");
         if (hadChunkedTransfer || headers.Contains("Content-Length"))
             headers.Set("Content-Length", body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        if (truncatedFrom > 0)
+            headers.Set(TruncationHeader, truncatedFrom.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         var head = HeaderEncoding.GetBytes(startLine + "\r\n" + headers.ToRawString() + "\r\n");
         if (body.Length == 0) return head;
