@@ -478,6 +478,8 @@
     "truncated": "\n\n[truncated]",
     "binaryContent": "[{{bytes, N0}} bytes of binary content - see the Hex tab]",
     "binaryBody": "[{{bytes, N0}} bytes of {{contentType}} content]\n\nSee the Hex tab.",
+    "bodyNotFullyCaptured": "\n\n[only the first {{kept, N0}} of {{total, N0}} bytes were kept; the whole body reached the client]",
+    "bodyReleased": "[{{total, N0}} bytes were relayed; the body was released to stay within the capture memory budget]",
     "binaryJsonBody": "[{{bytes, N0}} bytes of {{contentType}} content]",
     "binaryContentTypeFallback": "binary",
     "bodyDecodeFailed": "[could not decode body: {{message}}]",

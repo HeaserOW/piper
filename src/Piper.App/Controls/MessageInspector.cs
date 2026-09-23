@@ -1169,11 +1169,16 @@ public sealed class MessageInspector : UserControl
 
     private static string RenderBody(HttpMessage message)
     {
-        if (message.Body.Length == 0) return Strings.Inspector.NoBody;
+        // A body that was relayed but not kept is not an empty one, and must not read as one.
+        if (message.Body.Length == 0)
+            return message.BodyTotalLength > 0
+                ? Strings.Inspector.BodyReleased(message.BodyTotalLength)
+                : Strings.Inspector.NoBody;
 
         var decoded = message.DecodedBody;
         if (!ContentCodec.LooksTextual(message.ContentType, decoded))
-            return Strings.Inspector.BinaryBody(message.Body.Length, message.ContentType);
+            return Strings.Inspector.BinaryBody(message.BodyTotalLength, message.ContentType)
+                   + PartialCaptureNote(message);
 
         string text;
         try { text = message.BodyAsText(decoded); }
@@ -1183,8 +1188,19 @@ public sealed class MessageInspector : UserControl
         if (contentType.Contains("json", StringComparison.OrdinalIgnoreCase) && TryPrettyJson(text, out var pretty))
             text = pretty;
 
-        return text.Length > MaxRenderBytes ? text[..MaxRenderBytes] + Strings.Inspector.Truncated : text;
+        if (text.Length > MaxRenderBytes) text = text[..MaxRenderBytes] + Strings.Inspector.Truncated;
+        return text + PartialCaptureNote(message);
     }
+
+    /// <summary>
+    /// Says so when the displayed bytes are only the start of the body. Without this the inspector
+    /// shows a fragment indistinguishable from a complete small response, which is worse than
+    /// showing nothing -- someone would draw conclusions from a body that was never all there.
+    /// </summary>
+    private static string PartialCaptureNote(HttpMessage message) =>
+        message.IsBodyComplete
+            ? string.Empty
+            : Strings.Inspector.BodyNotFullyCaptured(message.Body.LongLength, message.BodyTotalLength);
 
     private static bool TryPrettyJson(string text, out string pretty)
     {

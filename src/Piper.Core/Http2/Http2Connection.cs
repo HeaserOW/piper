@@ -6,6 +6,21 @@ using Piper.Core.Http2.Hpack;
 namespace Piper.Core.Http2;
 
 /// <summary>
+/// What a handler answers one stream with: the head, and either a body already in hand or one
+/// still to be relayed from wherever it is coming from.
+/// </summary>
+/// <param name="Head">Status and headers. Carries the body too when <paramref name="RelayBody"/> is null.</param>
+/// <param name="RelayBody">
+/// Writes the body into the stream it is given, which turns those writes into flow-controlled DATA
+/// frames. Null when the body is already in <paramref name="Head"/>. Throwing resets the stream
+/// rather than ending it, so a body that failed part-way is not reported as complete.
+/// </param>
+public sealed record Http2StreamResponse(HttpResponseData Head, Func<Stream, CancellationToken, Task>? RelayBody = null)
+{
+    public static implicit operator Http2StreamResponse(HttpResponseData head) => new(head);
+}
+
+/// <summary>
 /// Server-role HTTP/2 connection (browser-facing). One task reads and demuxes frames off the
 /// wire sequentially (required for HPACK, which is stateful and processed strictly in wire
 /// order); each completed request is handed to <paramref name="handler"/> on its own tracked
@@ -14,7 +29,7 @@ namespace Piper.Core.Http2;
 /// -- a second task drains that queue and is the connection's sole writer, so concurrent streams
 /// can never interleave bytes on the wire.
 /// </summary>
-public sealed class Http2Connection(Stream stream, Func<HttpRequestData, CancellationToken, Task<HttpResponseData>> handler)
+public sealed class Http2Connection(Stream stream, Func<HttpRequestData, CancellationToken, Task<Http2StreamResponse>> handler)
     : IAsyncDisposable
 {
     private static readonly byte[] PrefaceBytes = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"u8.ToArray();
@@ -52,6 +67,35 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
     /// <summary>Credit back once about half the initial 65,535-byte connection window is used.</summary>
     private const int WindowUpdateThreshold = 32 * 1024;
 
+    /// <summary>
+    /// Completed and replaced whenever the peer grants more send window, so a sender waiting for
+    /// credit is woken by the grant itself.
+    /// </summary>
+    /// <remarks>
+    /// A sender that polled instead could only discover credit on its next tick, which caps
+    /// throughput at one window's worth per interval however promptly the peer replenishes it.
+    /// That was tolerable while every body was buffered before being framed; now that bodies are
+    /// relayed as they arrive, a large download is exactly the case that exhausts a window and
+    /// refills it continuously.
+    ///
+    /// A waiter must take the task *before* testing the window. Taking it afterwards loses a grant
+    /// that lands in between, and the sender then waits for a WINDOW_UPDATE that has already been
+    /// and gone.
+    /// </remarks>
+    private TaskCompletionSource _windowGranted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private Task WindowGranted => Volatile.Read(ref _windowGranted).Task;
+
+    private void SignalWindowGranted() =>
+        Interlocked.Exchange(ref _windowGranted, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously))
+            .TrySetResult();
+
+    /// <summary>How many times a sender has had to wait for send window. Lets a test prove the
+    /// waiting path was exercised rather than merely never reached.</summary>
+    internal int WindowStalls => Volatile.Read(ref _windowStalls);
+
+    private int _windowStalls;
+
     /// <summary>Atomically takes up to <paramref name="maxWanted"/> bytes from the shared
     /// connection-level send window, returning how much was actually reserved (0 if none is
     /// currently available). The caller must not send more than what this returns.</summary>
@@ -82,6 +126,11 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
         }
         finally
         {
+            // The connection is gone, however it ended -- GOAWAY, a protocol error, the peer
+            // closing. Every stream is cancelled so none is left waiting for send window that can
+            // no longer arrive, holding its upstream connection open.
+            foreach (var open in _streams.Values) open.Cancellation.Cancel();
+
             _outbox.Writer.TryComplete();
             await writerTask.ConfigureAwait(false);
 
@@ -167,7 +216,20 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
             return; // peer acknowledged our SETTINGS; phase 1 gates nothing on this
 
         if (frame.Payload.Length > 0)
+        {
+            var initialWindowBefore = _peerSettings.InitialWindowSize;
             _peerSettings.ApplyPeerPayload(frame.Payload.Span);
+
+            // RFC 9113 6.9.2: a new initial window size moves every open stream's window by the
+            // difference. A sender waiting for window is woken only by a signal, so this has to
+            // signal too, or a stream the new setting unblocks would wait on for ever.
+            var delta = (long)_peerSettings.InitialWindowSize - initialWindowBefore;
+            if (delta != 0)
+            {
+                foreach (var open in _streams.Values) Interlocked.Add(ref open.RemoteWindow, delta);
+                SignalWindowGranted();
+            }
+        }
 
         EnqueueWrite(ct2 => Http2FrameWriter.WriteAsync(stream, Http2FrameType.Settings, Http2FrameFlags.Ack, 0, ReadOnlyMemory<byte>.Empty, ct2));
     }
@@ -280,6 +342,12 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
         {
             Interlocked.Add(ref http2Stream.RemoteWindow, increment);
         }
+        else
+        {
+            return; // a grant for a stream that is already gone wakes nobody
+        }
+
+        SignalWindowGranted();
     }
 
     private void HandleRstStream(Http2Frame frame)
@@ -316,7 +384,7 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
     {
         try
         {
-            HttpResponseData response;
+            Http2StreamResponse response;
             try
             {
                 response = await handler(http2Stream.Request!, http2Stream.Cancellation.Token).ConfigureAwait(false);
@@ -346,23 +414,127 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
         }
     }
 
-    private async Task SendResponseAsync(Http2Stream http2Stream, HttpResponseData response, CancellationToken ct)
+    private async Task SendResponseAsync(Http2Stream http2Stream, Http2StreamResponse response, CancellationToken ct)
     {
-        var fields = Http2MessageAdapter.ToHeaderFields(response);
+        var head = response.Head;
+        var fields = Http2MessageAdapter.ToHeaderFields(head);
         var block = HpackEncoder.Encode(fields); // stateless encoder: safe to call from any task
-        var hasBody = response.Body.Length > 0;
         var streamId = http2Stream.Id;
+
+        // A relayed body has no length yet, so the headers must not claim there is no body.
+        var hasBody = response.RelayBody is not null || head.Body.Length > 0;
 
         EnqueueWrite(ct2 => Http2FrameWriter.WriteHeadersAsync(stream, streamId, block, endStream: !hasBody, _peerSettings.MaxFrameSize, ct2));
 
-        if (hasBody)
-            await SendBodyRespectingFlowControlAsync(http2Stream, response.Body, ct).ConfigureAwait(false);
+        if (response.RelayBody is { } relay)
+        {
+            var data = new Http2DataStream(this, http2Stream, ct);
+            try
+            {
+                await relay(data, ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // The relay failed after the head went out. Resetting the stream is the only way
+                // left to tell the client the body is incomplete.
+                EnqueueRstStream(streamId, Http2ErrorCode.InternalError);
+                return;
+            }
+
+            // An empty DATA frame carries the END_STREAM the relayed bytes could not: nothing along
+            // the way knew which write would turn out to be the last one.
+            EnqueueWrite(ct2 => Http2FrameWriter.WriteAsync(
+                stream, Http2FrameType.Data, Http2FrameFlags.EndStream, streamId, ReadOnlyMemory<byte>.Empty, ct2));
+        }
+        else if (hasBody)
+        {
+            await SendBodyRespectingFlowControlAsync(http2Stream, head.Body, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Turns writes into DATA frames, taking send window for each and waiting when there is none.
+    /// </summary>
+    /// <remarks>
+    /// Bytes are copied before being handed to the writer. The frame goes out later, off a queue,
+    /// while the caller is free to reuse its buffer for the next read -- which a relay reading into
+    /// a pooled buffer certainly will, and the frame would then carry whatever happened to be there
+    /// by the time it was written.
+    /// </remarks>
+    private sealed class Http2DataStream(Http2Connection connection, Http2Stream http2Stream, CancellationToken ct)
+        : Stream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken token = default)
+        {
+            var offset = 0;
+            while (offset < buffer.Length)
+            {
+                var take = await connection
+                    .ReserveSendWindowAsync(http2Stream, buffer.Length - offset, ct).ConfigureAwait(false);
+
+                connection.EnqueueDataFrame(http2Stream.Id, buffer.Slice(offset, take).ToArray());
+                offset += take;
+            }
+        }
+
+        public override Task FlushAsync(CancellationToken token) => Task.CompletedTask;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private void EnqueueDataFrame(int streamId, ReadOnlyMemory<byte> payload) =>
+        EnqueueWrite(ct2 => Http2FrameWriter.WriteAsync(
+            stream, Http2FrameType.Data, Http2FrameFlags.None, streamId, payload, ct2));
+
+    /// <summary>
+    /// Takes as much send window as is available, up to <paramref name="wanted"/> and one frame,
+    /// waiting for the peer to grant more when there is none. Never returns zero.
+    /// </summary>
+    private async Task<int> ReserveSendWindowAsync(Http2Stream http2Stream, int wanted, CancellationToken ct)
+    {
+        while (true)
+        {
+            // Taken before the window is tested, so a grant arriving between the test and the wait
+            // still completes this task rather than being missed.
+            var granted = WindowGranted;
+
+            // The stream window has exactly one spender (this task, for this stream), so reading it
+            // and deciding how much to ask for need not be atomic with the reservation. The
+            // connection window is shared across every concurrently-sending stream, so reserving
+            // from it must be a single atomic step (see TryReserveConnectionWindow) -- otherwise
+            // two streams can each act on the same stale balance and together overspend it.
+            var streamWindow = Interlocked.Read(ref http2Stream.RemoteWindow);
+            var ask = (int)Math.Max(0, Math.Min(streamWindow, Math.Min(wanted, _peerSettings.MaxFrameSize)));
+
+            if (ask > 0)
+            {
+                var reserved = (int)TryReserveConnectionWindow(ask);
+                if (reserved > 0)
+                {
+                    Interlocked.Add(ref http2Stream.RemoteWindow, -reserved);
+                    return (int)reserved;
+                }
+            }
+
+            Interlocked.Increment(ref _windowStalls);
+            await granted.WaitAsync(ct).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Sends a response body as one or more DATA frames, never sending more than the
-    /// peer's currently-granted connection- and stream-level flow-control windows allow. Real
-    /// bodies almost always fit inside the generous windows both sides advertise, so the wait
-    /// loop below is a rarely-exercised safety net, not the common case.</summary>
+    /// peer's currently-granted connection- and stream-level flow-control windows allow. Waiting
+    /// for credit is an ordinary part of sending anything large, not a rare safety net: a body of
+    /// any size will exhaust the window the peer advertised and then move at the rate the peer
+    /// replenishes it.</summary>
     private async Task SendBodyRespectingFlowControlAsync(Http2Stream http2Stream, byte[] body, CancellationToken ct)
     {
         var streamId = http2Stream.Id;
@@ -370,28 +542,7 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
 
         while (offset < body.Length)
         {
-            int chunk;
-            while (true)
-            {
-                // The stream window has exactly one spender (this task, for this stream), so
-                // reading it and deciding how much to *ask for* doesn't need to be atomic with
-                // the actual reservation. The connection window is shared across every
-                // concurrently-sending stream, so reserving from it must be a single atomic step
-                // (see TryReserveConnectionWindow) -- otherwise two streams can each act on the
-                // same stale balance and together overspend it.
-                var streamWindow = Interlocked.Read(ref http2Stream.RemoteWindow);
-                var wanted = (int)Math.Max(0, Math.Min(streamWindow, Math.Min(body.Length - offset, _peerSettings.MaxFrameSize)));
-
-                if (wanted > 0)
-                {
-                    var reserved = (int)TryReserveConnectionWindow(wanted);
-                    if (reserved > 0) { chunk = reserved; break; }
-                }
-
-                await Task.Delay(20, ct).ConfigureAwait(false);
-            }
-
-            Interlocked.Add(ref http2Stream.RemoteWindow, -chunk);
+            var chunk = await ReserveSendWindowAsync(http2Stream, body.Length - offset, ct).ConfigureAwait(false);
 
             var isLast = offset + chunk >= body.Length;
             var slice = body.AsMemory(offset, chunk);

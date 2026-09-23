@@ -91,9 +91,11 @@ public sealed class Session
 
     public string ContentType => Response?.ContentType ?? string.Empty;
 
-    public long RequestSize => Request?.Body.LongLength ?? 0;
+    public long RequestSize => Request?.BodyTotalLength ?? 0;
 
-    public long ResponseSize => Response?.Body.LongLength ?? 0;
+    /// <summary>What the response body weighed on the wire, which is what a size column means --
+    /// not how much of it was kept when only a prefix of a large body is retained.</summary>
+    public long ResponseSize => Response?.BodyTotalLength ?? 0;
 
     /// <summary>The protocol version the browser actually used talking to Piper. Computed (not
     /// stored) from <see cref="Request"/>'s <c>HttpVersion</c> string, which is already populated

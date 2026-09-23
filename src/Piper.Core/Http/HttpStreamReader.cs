@@ -27,6 +27,17 @@ public sealed class HttpStreamReader : IDisposable
 
     public Stream BaseStream => _stream;
 
+    /// <summary>
+    /// How long a single read may wait for the peer to send something before the connection is
+    /// treated as dead. <see cref="Timeout.InfiniteTimeSpan"/> (the default) waits for ever.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately an idle timeout rather than a budget for the whole message: a legitimate
+    /// multi-gigabyte download is not a stall, and a server-sent-event stream that says nothing
+    /// for a while is not either. What is never legitimate is silence with no end.
+    /// </remarks>
+    public TimeSpan IdleTimeout { get; set; } = Timeout.InfiniteTimeSpan;
+
     /// <summary>Bytes sitting in the buffer that have been read from the socket but not consumed.</summary>
     public int Buffered => _end - _start;
 
@@ -57,7 +68,7 @@ public sealed class HttpStreamReader : IDisposable
             }
         }
 
-        var read = await _stream.ReadAsync(_buffer.AsMemory(_end, _buffer.Length - _end), ct).ConfigureAwait(false);
+        var read = await ReadWithIdleTimeoutAsync(ct).ConfigureAwait(false);
         if (read <= 0)
         {
             EndOfStream = true;
@@ -65,6 +76,29 @@ public sealed class HttpStreamReader : IDisposable
         }
         _end += read;
         return true;
+    }
+
+    private async ValueTask<int> ReadWithIdleTimeoutAsync(CancellationToken ct)
+    {
+        var destination = _buffer.AsMemory(_end, _buffer.Length - _end);
+
+        if (IdleTimeout == Timeout.InfiniteTimeSpan)
+            return await _stream.ReadAsync(destination, ct).ConfigureAwait(false);
+
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        idle.CancelAfter(IdleTimeout);
+        try
+        {
+            return await _stream.ReadAsync(destination, idle.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Reported as a parse failure rather than a cancellation so it reaches the caller as a
+            // named reason: a silently abandoned read is indistinguishable from the hang it exists
+            // to prevent.
+            throw new HttpParseException(
+                $"No data received for {IdleTimeout.TotalSeconds:0.#}s; treating the connection as stalled.");
+        }
     }
 
     /// <summary>
@@ -137,16 +171,24 @@ public sealed class HttpStreamReader : IDisposable
     }
 
     /// <summary>Reads until the peer closes the connection. Used for HTTP/1.0-style delimited bodies.</summary>
+    /// <remarks>
+    /// Exceeding <paramref name="limit"/> throws rather than returning what fits. A short read here
+    /// is not a partial answer, it is a wrong one: the caller goes on to advertise the truncated
+    /// length downstream while the rest of the body is still queued on the socket, so the next
+    /// message read from that connection starts mid-body.
+    /// </remarks>
     public async ValueTask<byte[]> ReadToEndAsync(long limit, CancellationToken ct)
     {
         using var ms = new MemoryStream();
         var scratch = ArrayPool<byte>.Shared.Rent(32 * 1024);
         try
         {
-            while (ms.Length < limit)
+            while (true)
             {
                 var n = await ReadAsync(scratch.AsMemory(0, scratch.Length), ct).ConfigureAwait(false);
                 if (n == 0) break;
+                if (ms.Length + n > limit)
+                    throw new HttpParseException($"Body delimited by connection close exceeded the {limit} byte cap.");
                 ms.Write(scratch, 0, n);
             }
         }
@@ -155,6 +197,23 @@ public sealed class HttpStreamReader : IDisposable
             ArrayPool<byte>.Shared.Return(scratch);
         }
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Hands back the bytes already pulled off the socket but not yet consumed, and forgets them.
+    /// </summary>
+    /// <remarks>
+    /// Needed when a connection stops being HTTP and becomes something this reader must not touch
+    /// again -- a 101 handing over to WebSocket. Reads are buffered, so by the time the 101 head
+    /// has been parsed the peer's first frames may already be sitting here. Whoever relays the raw
+    /// stream from now on has to be given these first, or they are silently dropped.
+    /// </remarks>
+    public byte[] TakeBuffered()
+    {
+        if (_start == _end) return [];
+        var pending = _buffer.AsSpan(_start, _end - _start).ToArray();
+        _start = _end = 0;
+        return pending;
     }
 
     /// <summary>Peeks whether more data is available without consuming it. Used to detect idle keep-alive sockets.</summary>
