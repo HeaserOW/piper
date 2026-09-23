@@ -184,7 +184,9 @@ public sealed class ComposerPanel : UserControl
 
         // Deliberately not driven by SessionStore events: history is this panel's own list, and
         // rebuilding the tree for every captured session reset the selection several times a
-        // second. Everything that changes _history marks the tree dirty itself.
+        // second. Everything that changes _history marks the tree dirty itself, and a send is only
+        // added once it has completed (ExecuteRequestAsync awaits the response first), so no
+        // history row ever needs repainting when a response arrives later.
         _searchTimer = new System.Windows.Forms.Timer { Interval = 400 };
         _searchTimer.Tick += (_, _) =>
         {
