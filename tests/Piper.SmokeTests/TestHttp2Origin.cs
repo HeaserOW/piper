@@ -20,13 +20,19 @@ internal sealed class TestHttp2Origin : IAsyncDisposable
 {
     private readonly TcpListener _listener;
     private readonly X509Certificate2 _certificate;
-    private readonly Func<HttpRequestData, CancellationToken, Task<HttpResponseData>> _handler;
+    private readonly Func<HttpRequestData, CancellationToken, Task<Http2StreamResponse>> _handler;
     private readonly CancellationTokenSource _cts = new();
     private readonly List<Task> _connections = [];
     private readonly Lock _gate = new();
     private readonly Task _acceptLoop;
 
     public TestHttp2Origin(X509Certificate2 certificate, Func<HttpRequestData, CancellationToken, Task<HttpResponseData>> handler)
+        : this(certificate, async (r, c) => (Http2StreamResponse)await handler(r, c).ConfigureAwait(false))
+    {
+    }
+
+    /// <summary>An origin that can also send its body in parts, to test what arrives when.</summary>
+    public TestHttp2Origin(X509Certificate2 certificate, Func<HttpRequestData, CancellationToken, Task<Http2StreamResponse>> handler)
     {
         _certificate = certificate;
         _handler = handler;
@@ -67,7 +73,7 @@ internal sealed class TestHttp2Origin : IAsyncDisposable
         }
         catch { await ssl.DisposeAsync().ConfigureAwait(false); return; }
 
-        var connection = new Http2Connection(ssl, async (r, c) => await _handler(r, c).ConfigureAwait(false));
+        var connection = new Http2Connection(ssl, _handler);
         try { await connection.RunAsync(_cts.Token).ConfigureAwait(false); }
         catch { /* the test asserts on the client side */ }
         finally { await ssl.DisposeAsync().ConfigureAwait(false); }

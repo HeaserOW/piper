@@ -5,6 +5,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Piper.Core.Http;
+using Piper.Core.Http2;
 using Piper.Core.Proxy;
 using Piper.Core.Security;
 using Piper.Core.Sessions;
@@ -189,6 +190,71 @@ internal static class Http2Tests
             runner.AreEqual(HttpStatusCode.OK, response.StatusCode, "large response completed instead of stalling");
             runner.AreEqual(size, body.Length, "whole body arrived, not just the first window");
             runner.IsTrue(LargePattern(size).AsSpan().SequenceEqual(body), "body bytes are intact end to end");
+        });
+
+        await runner.RunAsync("an HTTP/2 origin's body is relayed as it arrives, not once it is whole", async () =>
+        {
+            // The shape of a real download from a CDN: a decrypted HTTPS origin negotiates h2. The
+            // origin is held on a gate the test owns, so "the client had the first part before the
+            // origin sent the rest" is program order, not timing. Buffering deadlocks here.
+            var first = LargePattern(16 * 1024);
+            var second = LargePattern(24 * 1024);
+            var gate = new TaskCompletionSource();
+            var released = false;
+            var declareLength = false;
+
+            await using var gated = new TestHttp2Origin(ca.GetCertificateFor("127.0.0.1"), (_, _) =>
+            {
+                var head = new HttpResponseData { StatusCode = 200, ReasonPhrase = "OK" };
+                head.Headers.Set("Content-Type", "application/octet-stream");
+                if (declareLength) head.Headers.Set("Content-Length", (first.Length + second.Length).ToString());
+                return Task.FromResult(new Http2StreamResponse(head, async (destination, ct) =>
+                {
+                    await destination.WriteAsync(first, ct);
+                    await destination.FlushAsync(ct);
+                    await gate.Task.WaitAsync(ct);
+                    await destination.WriteAsync(second, ct);
+                }));
+            });
+
+            using var h1Client = new HttpClient(new HttpClientHandler
+            {
+                Proxy = new WebProxy($"http://127.0.0.1:{proxyPort}"),
+                UseProxy = true,
+                ServerCertificateCustomValidationCallback = (_, cert, _, _) => TrustsRoot(ca.RootCertificate, cert),
+            })
+            { DefaultRequestVersion = HttpVersion.Version11, DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact, Timeout = TimeSpan.FromSeconds(20) };
+
+            foreach (var (leg, legClient) in new[] { ("h1.1", h1Client), ("h2", client) })
+            foreach (var withLength in new[] { true, false })
+            {
+                gate = new TaskCompletionSource();
+                released = false;
+                declareLength = withLength;
+                var what = $"{leg} client, {(withLength ? "with" : "without")} a content-length";
+
+                using var response = await legClient.GetAsync($"https://127.0.0.1:{gated.Port}/drip",
+                    HttpCompletionOption.ResponseHeadersRead);
+
+                // What a downloader draws its progress bar from: carried over when the origin gave
+                // it, rather than lost to re-framing.
+                runner.AreEqual(withLength ? first.Length + second.Length : -1L,
+                    response.Content.Headers.ContentLength ?? -1L, $"{what}: the length is as the origin gave it");
+
+                await using var body = await response.Content.ReadAsStreamAsync();
+                var got = new byte[first.Length];
+                await body.ReadExactlyAsync(got).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                runner.IsTrue(!released, $"{what}: the first part arrives while the origin is still gated");
+                runner.IsTrue(first.AsSpan().SequenceEqual(got), $"{what}: byte-exact");
+
+                released = true;
+                gate.SetResult();
+
+                var rest = new byte[second.Length];
+                await body.ReadExactlyAsync(rest).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+                runner.IsTrue(second.AsSpan().SequenceEqual(rest), $"{what}: the rest follows");
+                runner.AreEqual(-1, body.ReadByte(), $"{what}: and the body ends there");
+            }
         });
 
         await runner.RunAsync("a request body larger than the 64KB connection window survives both h2 legs", async () =>

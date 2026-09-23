@@ -42,6 +42,17 @@ public abstract class HttpMessage
         Body = [];
     }
 
+    /// <summary>
+    /// Keeps only the first <paramref name="limit"/> bytes of a body that was read whole, as a
+    /// relayed body is kept, so a buffered download is not retained in full either.
+    /// </summary>
+    public void KeepPrefix(long limit)
+    {
+        if (Body.LongLength <= limit) return;
+        _bodyTotalLength = BodyTotalLength;
+        Body = Body[..(int)Math.Max(0, limit)];
+    }
+
     public string? ContentType => Headers["Content-Type"];
 
     public string? ContentEncoding => Headers["Content-Encoding"];

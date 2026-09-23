@@ -126,6 +126,11 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
         }
         finally
         {
+            // The connection is gone, however it ended -- GOAWAY, a protocol error, the peer
+            // closing. Every stream is cancelled so none is left waiting for send window that can
+            // no longer arrive, holding its upstream connection open.
+            foreach (var open in _streams.Values) open.Cancellation.Cancel();
+
             _outbox.Writer.TryComplete();
             await writerTask.ConfigureAwait(false);
 
@@ -211,7 +216,20 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
             return; // peer acknowledged our SETTINGS; phase 1 gates nothing on this
 
         if (frame.Payload.Length > 0)
+        {
+            var initialWindowBefore = _peerSettings.InitialWindowSize;
             _peerSettings.ApplyPeerPayload(frame.Payload.Span);
+
+            // RFC 9113 6.9.2: a new initial window size moves every open stream's window by the
+            // difference. A sender waiting for window is woken only by a signal, so this has to
+            // signal too, or a stream the new setting unblocks would wait on for ever.
+            var delta = (long)_peerSettings.InitialWindowSize - initialWindowBefore;
+            if (delta != 0)
+            {
+                foreach (var open in _streams.Values) Interlocked.Add(ref open.RemoteWindow, delta);
+                SignalWindowGranted();
+            }
+        }
 
         EnqueueWrite(ct2 => Http2FrameWriter.WriteAsync(stream, Http2FrameType.Settings, Http2FrameFlags.Ack, 0, ReadOnlyMemory<byte>.Empty, ct2));
     }

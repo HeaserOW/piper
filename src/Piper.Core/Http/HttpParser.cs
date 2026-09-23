@@ -237,11 +237,7 @@ public static class HttpParser
             if (chunkSize == 0)
             {
                 // Consume trailers up to the terminating blank line.
-                while (true)
-                {
-                    var trailer = await reader.ReadLineAsync(ct).ConfigureAwait(false);
-                    if (trailer is null || trailer.Length == 0) break;
-                }
+                await SkipTrailersAsync(reader, ct).ConfigureAwait(false);
                 return body.ToArray();
             }
 
@@ -278,5 +274,21 @@ public static class HttpParser
         return Uri.TryCreate($"{scheme}://{host}{target}", UriKind.Absolute, out var url) ? url : null;
     }
 
-    private static string Truncate(string value) => value.Length <= 120 ? value : value[..120] + "...";
+    /// <summary>
+    /// Reads and discards a chunked body's trailer section. Bounded like a header block, or an
+    /// origin could keep sending trailer lines for ever and the body would never end.
+    /// </summary>
+    internal static async Task SkipTrailersAsync(HttpStreamReader reader, CancellationToken ct)
+    {
+        for (var lines = 0; ; lines++)
+        {
+            if (lines > MaxTrailerLines) throw new HttpParseException("Too many trailer lines.");
+            var trailer = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            if (trailer is null || trailer.Length == 0) return;
+        }
+    }
+
+    private const int MaxTrailerLines = 200;
+
+    internal static string Truncate(string value) => value.Length <= 120 ? value : value[..120] + "...";
 }

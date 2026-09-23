@@ -9,12 +9,13 @@ namespace Piper.Core.Proxy;
 /// <param name="Head">Status line and headers. Carries the body too when <paramref name="IsBuffered"/>.</param>
 /// <param name="Body">How the body is framed, for a caller that still has to read it.</param>
 /// <param name="IsBuffered">
-/// True when the whole message was read before returning, which is still the case for HTTP/2 and
-/// HTTP/3 upstream legs. False for HTTP/1.1, where the body is left on the connection so it can be
-/// relayed onward as it arrives.
+/// True when the whole message was read before returning, which is still the case for an HTTP/3
+/// upstream leg. False for HTTP/1.1 and HTTP/2, where the body is left to be relayed onward as it
+/// arrives.
 /// </param>
+/// <param name="BodyReader">Where the body is read from when it was not buffered.</param>
 internal readonly record struct UpstreamResponse(
-    HttpResponseData Head, HttpBodyDescriptor Body, bool IsBuffered);
+    HttpResponseData Head, HttpBodyDescriptor Body, bool IsBuffered, HttpStreamReader? BodyReader = null);
 
 /// <summary>
 /// Sends one request over an already-connected <see cref="UpstreamConnection"/>, branching on
@@ -37,9 +38,10 @@ internal static class UpstreamRequestSender
         if (upstream.IsHttp2)
         {
             onRequestSent();
-            var buffered = await new Http2ClientConnection(upstream.Stream)
-                .SendRequestAsync(outbound, ct).ConfigureAwait(false);
-            return new UpstreamResponse(buffered, HttpBodyDescriptor.None, IsBuffered: true);
+            var h2 = new Http2ClientConnection(upstream.Stream);
+            var h2Head = await h2.SendRequestHeadAsync(outbound, ct).ConfigureAwait(false);
+            var bodyReader = new HttpStreamReader(h2.ResponseBody) { IdleTimeout = upstream.Reader.IdleTimeout };
+            return new UpstreamResponse(h2Head, DescribeHttp2Body(h2Head, outbound.Method), IsBuffered: false, bodyReader);
         }
 
         MakeValidHttp11(outbound);
@@ -53,7 +55,23 @@ internal static class UpstreamRequestSender
         // any of the body has been read there is no going back to streaming it.
         var (head, body) = await HttpParser
             .ReadResponseHeadAsync(upstream.Reader, outbound.Method, ct).ConfigureAwait(false);
-        return new UpstreamResponse(head, body, IsBuffered: false);
+        return new UpstreamResponse(head, body, IsBuffered: false, upstream.Reader);
+    }
+
+    /// <summary>
+    /// Framing for a body arriving in HTTP/2 DATA frames. A content-length still counts, since a
+    /// client drawing progress needs it; without one the body ends at END_STREAM, which unlike a
+    /// close-delimited HTTP/1.1 body says nothing about the connection.
+    /// </summary>
+    private static HttpBodyDescriptor DescribeHttp2Body(HttpResponseData head, string method)
+    {
+        // RFC 9113 8.2.2: Transfer-Encoding has no meaning in HTTP/2, so a response carrying it is
+        // malformed rather than chunked.
+        if (head.Headers.Contains("Transfer-Encoding"))
+            throw new HttpParseException("HTTP/2 response carries Transfer-Encoding.");
+
+        var body = HttpParser.DescribeResponseBody(head.Headers, method, head.StatusCode);
+        return body.Framing == HttpBodyFraming.UntilClose ? HttpBodyDescriptor.StreamEnd : body;
     }
 
     /// <summary>

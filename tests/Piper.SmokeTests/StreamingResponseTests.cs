@@ -313,8 +313,19 @@ internal static class StreamingResponseTests
 
             originPair.Far.Dispose();   // the origin ends; the client never sends another byte
 
-            var finished = await Task.WhenAny(relay, Task.Delay(TimeSpan.FromSeconds(10))) == relay;
-            runner.IsTrue(finished, "the relay ends instead of waiting on the silent direction");
+            // Awaited rather than merely raced, so the relay has to *complete*: a fault here would
+            // reach the 101 caller's catch, and an ordinary WebSocket close would be recorded as a
+            // failure and answered with a reset.
+            string outcome;
+            try
+            {
+                await relay.WaitAsync(TimeSpan.FromSeconds(10));
+                outcome = "completed";
+            }
+            catch (TimeoutException) { outcome = "still waiting on the silent direction"; }
+            catch (Exception ex) { outcome = $"faulted with {ex.GetType().Name}"; }
+
+            runner.AreEqual("completed", outcome, "the relay ends cleanly when one side does");
         });
     }
 

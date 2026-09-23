@@ -101,6 +101,50 @@ internal static class BoundedCaptureTests
             return Task.CompletedTask;
         });
 
+        await runner.RunAsync("a body read whole is kept only as far as a relayed one", () =>
+        {
+            // HTTP/3 still reads a body whole. What the capture keeps of it must follow the same
+            // limit as a relayed body, or one large download is retained in full and the budget
+            // releases every other session's body to make room for it.
+            var response = new HttpResponseData { Body = new byte[100_000] };
+            response.KeepPrefix(4_096);
+
+            runner.AreEqual(4_096, response.Body.Length, "only the limit is kept");
+            runner.AreEqual(100_000L, response.BodyTotalLength, "the true size is still reported");
+            runner.IsTrue(!response.IsBodyComplete, "and it is flagged as partial");
+
+            var small = new HttpResponseData { Body = new byte[100] };
+            small.KeepPrefix(4_096);
+            runner.IsTrue(small.Body.Length == 100 && small.IsBodyComplete, "a body under the limit is untouched");
+            return Task.CompletedTask;
+        });
+
+        await runner.RunAsync("a compressed body kept only in part still decodes without throwing", () =>
+        {
+            // A capture limit cuts a gzip stream mid-member, which a whole-or-nothing capture never
+            // produced. The inspector decodes on the UI thread, so this has to degrade, not throw.
+            using var compressed = new MemoryStream();
+            using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+                gzip.Write(Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("partial capture ", 20_000))));
+
+            var response = new HttpResponseData { Body = compressed.ToArray() };
+            response.Headers.Set("Content-Encoding", "gzip");
+            response.Headers.Set("Content-Type", "text/plain");
+            response.KeepPrefix(response.Body.Length / 2);
+
+            string outcome;
+            try
+            {
+                var decoded = response.DecodedBody;
+                _ = response.BodyAsText(decoded);
+                outcome = "decoded";
+            }
+            catch (Exception ex) { outcome = $"threw {ex.GetType().Name}"; }
+
+            runner.AreEqual("decoded", outcome, "the truncated stream decodes as far as it goes, or falls back to the raw bytes");
+            return Task.CompletedTask;
+        });
+
         await runner.RunAsync("the budget counts a body attached after the session was admitted", () =>
         {
             // The order the proxy actually uses: the session is added while the request is still in

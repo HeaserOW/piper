@@ -14,6 +14,12 @@ public enum HttpBodyFraming
 
     /// <summary>The body runs until the peer closes the connection.</summary>
     UntilClose,
+
+    /// <summary>
+    /// The body runs until the transport marks the end of the message -- an HTTP/2 END_STREAM --
+    /// with no length given in advance. Unlike <see cref="UntilClose"/>, the connection outlives it.
+    /// </summary>
+    StreamEnd,
 }
 
 /// <summary>
@@ -36,6 +42,8 @@ public readonly record struct HttpBodyDescriptor(HttpBodyFraming Framing, long L
     public static HttpBodyDescriptor Chunked => new(HttpBodyFraming.Chunked, -1);
 
     public static HttpBodyDescriptor UntilClose => new(HttpBodyFraming.UntilClose, -1);
+
+    public static HttpBodyDescriptor StreamEnd => new(HttpBodyFraming.StreamEnd, -1);
 
     /// <summary>True when no bytes at all follow the header block.</summary>
     public bool IsEmpty => Framing == HttpBodyFraming.None;

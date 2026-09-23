@@ -509,6 +509,7 @@ public sealed class ProxyServer : IAsyncDisposable
         // in flight -- as body bytes, as a corrupt chunk, or, on a close-delimited body, as content
         // nothing could tell apart from the origin's.
         var responseStarted = false;
+        var oneShotUpstream = false;
         try
         {
             var outbound = BuildOutboundRequest(request, isUpgrade, _options);
@@ -560,8 +561,9 @@ public sealed class ProxyServer : IAsyncDisposable
                 session.ServerEndpoint = upstream.RemoteEndpoint;
                 upstreamResponse = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
 
-                // Http2ClientConnection is one-shot, so an h2 upstream can never be pooled.
-                if (upstream.IsHttp2) slot.Reset();
+                // Http2ClientConnection is one-shot, so an h2 upstream can never be pooled. It is let
+                // go once the body has been relayed off it, not before.
+                oneShotUpstream = upstream.IsHttp2;
             }
 
             var response = upstreamResponse.Head;
@@ -616,7 +618,7 @@ public sealed class ProxyServer : IAsyncDisposable
             // HTTP/1.0 has no chunked coding (RFC 9112 7.1), so a chunked body goes to such a client
             // de-chunked and delimited by the close instead.
             var dechunkForClient = !upstreamResponse.IsBuffered
-                                   && upstreamResponse.Body.Framing == HttpBodyFraming.Chunked
+                                   && upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.StreamEnd
                                    && request.HttpVersion == "HTTP/1.0";
             var clientCloseAfterBody = closeAfterBody || dechunkForClient;
 
@@ -641,10 +643,13 @@ public sealed class ProxyServer : IAsyncDisposable
                 // A Content-Length is only the framing when nothing overrides it. Beside chunked it
                 // does not describe the bytes relayed, and the next hop may frame on either one, so
                 // RFC 9112 6.1 has a proxy drop it.
-                if (upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose)
+                if (upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose or HttpBodyFraming.StreamEnd)
                     inbound.Headers.Remove("Content-Length");
 
-                rechunk = upstreamResponse.Body.Framing == HttpBodyFraming.Chunked && !dechunkForClient;
+                // A body with no length that does not end the connection -- chunked, or an HTTP/2
+                // stream -- has to be chunked for an HTTP/1.1 client to find its end.
+                rechunk = upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.StreamEnd
+                          && !dechunkForClient;
                 if (rechunk) inbound.Headers.Set("Transfer-Encoding", "chunked");
             }
 
@@ -653,6 +658,10 @@ public sealed class ProxyServer : IAsyncDisposable
             {
                 await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
+
+                // Forwarded whole, but kept only as far as a relayed body would be.
+                response.KeepPrefix(_options.MaxCapturedBodyBytes);
+                session.InvalidateSearchIndex();
             }
             else
             {
@@ -663,7 +672,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 _store.NotifyUpdated(session);
 
                 var relayed = await HttpBodyRelay.RelayAsync(
-                    slot.Connection!.Reader, upstreamResponse.Body, clientStream,
+                    upstreamResponse.BodyReader!, upstreamResponse.Body, clientStream,
                     rechunk, _options.MaxCapturedBodyBytes, ct).ConfigureAwait(false);
 
                 response.Body = relayed.Captured;
@@ -675,12 +684,12 @@ public sealed class ProxyServer : IAsyncDisposable
             session.Completed = DateTimeOffset.Now;
             _store.NotifyUpdated(session);
 
-            if (serverWantsClose || closeAfterBody) slot.Reset();
+            if (serverWantsClose || closeAfterBody || oneShotUpstream) slot.Reset();
 
             return !clientWantsClose && !serverWantsClose && !clientCloseAfterBody;
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
-                                       or HttpParseException or OperationCanceledException)
+                                       or HttpParseException or Http2ProtocolException or OperationCanceledException)
         {
             session.State = SessionState.Failed;
             session.Error = Describe(ex);

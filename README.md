@@ -327,9 +327,15 @@ refused with a 502 rather than relayed. If the origin fails once the body has st
 connection is reset (an HTTP/2 stream gets `RST_STREAM`), so a cut-off download is never mistaken
 for a finished one.
 
-Both legs do this. An HTTP/1.1 response is relayed onward as it is read; an HTTP/2 response is
-framed into DATA frames as the bytes arrive, and a sender that exhausts the peer flow-control
-window resumes on the WINDOW_UPDATE that grants more rather than on the next tick of a timer.
+It holds whichever protocol either leg speaks. From the origin, an HTTP/1.1 body is relayed as it
+is read and an HTTP/2 body DATA frame by DATA frame -- which matters, because a decrypted HTTPS
+origin, a CDN in particular, usually negotiates HTTP/2. Towards the client, an HTTP/2 body is framed
+into DATA frames as the bytes arrive, and a sender that exhausts the peer flow-control window
+resumes on the grant that gives it more rather than on the next tick of a timer.
+
+The one exception is an HTTP/3 origin, which is off by default (`EnableHttp3Upstream`): its
+response is still read whole before any of it is forwarded, so none of the three points below holds
+for it. What the capture keeps of such a body is bounded by `MaxCapturedBodyBytes` all the same.
 
 This matters in three ways:
 
@@ -370,6 +376,8 @@ there is nothing to give up here, which is why there is no buffering mode to swi
   pseudo-headers and forbidden headers are structurally at odds with "what you type is what goes
   on the wire")
 - HTTP/3 stream reuse (one QUIC connection per request) and server push
+- Relaying an HTTP/3 origin's response as it arrives (it is read whole first; see
+  [Large and long-lived responses](#large-and-long-lived-responses))
 - Breakpoints, and tampering with a response the origin actually sent (the AutoResponder replaces
   responses, it does not edit real ones on their way back)
 - Upstream proxy chaining

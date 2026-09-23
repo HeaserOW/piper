@@ -91,6 +91,7 @@ internal static class Http2RequestForwarder
         // Set when the upstream leg left its body on the connection for relaying; null when the
         // whole message is already in hand, as it is over HTTP/2 and HTTP/3.
         HttpBodyDescriptor? framing = null;
+        HttpStreamReader? bodyReader = null;
 
         try
         {
@@ -122,6 +123,7 @@ internal static class Http2RequestForwarder
                 var sent = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
                 response = sent.Head;
                 framing = sent.IsBuffered ? null : sent.Body;
+                bodyReader = sent.BodyReader;
             }
 
             session.TimeToFirstByte = stopwatch.Elapsed - beforeResponse;
@@ -140,14 +142,24 @@ internal static class Http2RequestForwarder
 
             // Beside chunked, or on a body read until close, the origin's Content-Length does not
             // describe the bytes about to be relayed, and an h2 client checks DATA against it.
-            if (framing is { Framing: HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose })
+            if (framing is { Framing: HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose or HttpBodyFraming.StreamEnd })
                 inbound.Headers.Remove("Content-Length");
             session.Response = inbound;
             session.InvalidateSearchIndex();
 
-            // No body to relay -- HEAD, 204, 304 -- ends on the HEADERS frame, as it does on h1.
+            // Nothing to relay: the body is already in hand (HTTP/3), or there is none at all (HEAD,
+            // 204, 304), which ends on the HEADERS frame as it does on h1.
             if (framing is not { Framing: not HttpBodyFraming.None } body)
             {
+                // The client is sent the whole body; the capture keeps only as much of it as a
+                // relayed body would.
+                if (inbound.Body.LongLength > options.MaxCapturedBodyBytes)
+                {
+                    var kept = inbound.Clone();
+                    kept.KeepPrefix(options.MaxCapturedBodyBytes);
+                    session.Response = kept;
+                }
+
                 session.State = SessionState.Complete;
                 session.Completed = DateTimeOffset.Now;
                 store.NotifyUpdated(session);
@@ -166,7 +178,7 @@ internal static class Http2RequestForwarder
                 try
                 {
                     var relayed = await HttpBodyRelay.RelayAsync(
-                        leg.Reader, body, destination,
+                        bodyReader!, body, destination,
                         rechunkDownstream: false, options.MaxCapturedBodyBytes, relayCt).ConfigureAwait(false);
 
                     inbound.Body = relayed.Captured;
@@ -174,7 +186,7 @@ internal static class Http2RequestForwarder
                     session.State = SessionState.Complete;
                 }
                 catch (Exception relayError) when (relayError is SocketException or IOException
-                                                       or HttpParseException or OperationCanceledException)
+                                                       or HttpParseException or Http2ProtocolException or OperationCanceledException)
                 {
                     // The head is already with the client and cannot be taken back. Rethrown so the
                     // stream is reset rather than ended: a clean END_STREAM would pass a short body
@@ -193,7 +205,7 @@ internal static class Http2RequestForwarder
             });
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
-                                       or HttpParseException or OperationCanceledException)
+                                       or HttpParseException or Http2ProtocolException or OperationCanceledException)
         {
             var detail = ProxyServer.Describe(ex);
             var failure = HttpResponseData.Simple(502, "Bad Gateway", $"Piper could not reach {host}:{port}.\r\n\r\n{detail}");

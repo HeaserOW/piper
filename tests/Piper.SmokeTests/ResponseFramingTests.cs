@@ -193,6 +193,8 @@ internal static class ResponseFramingTests
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", "a chunked body with no terminating chunk"),
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloXY\r\n0\r\n\r\n", "a chunk running on past its size"),
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n5\r\nhello\r\n0\r\n\r\n", "blank lines where a chunk size belongs"),
+                ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n" + string.Concat(Enumerable.Repeat("X-T: 1\r\n", 300)) + "\r\n",
+                    "a trailer section that does not stop"),
                 ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!", "conflicting Content-Length headers"),
                 ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n", "a header block that never ends"),
                 ("", "a connection that closes before the status line"),

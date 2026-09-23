@@ -46,12 +46,19 @@ public sealed class Http2ClientConnection(Stream stream)
     private const int WindowUpdateThreshold = 32 * 1024;
 
     private readonly List<byte> _headerBlockFragment = [];
-    private readonly MemoryStream _responseBody = new();
     private List<(string Name, string Value)>? _responseFields;
     private bool _sawEndStreamOnHeaders;
     private bool _responseComplete;
 
-    public async Task<HttpResponseData> SendRequestAsync(HttpRequestData request, CancellationToken ct)
+    // The payload of the last DATA frame read, not yet handed to the body's reader. Frames are read
+    // only when the reader asks for more, so this never holds more than one.
+    private ReadOnlyMemory<byte> _pendingData;
+
+    /// <summary>
+    /// Sends the request and returns once the response head has arrived, leaving the body to be
+    /// read from <see cref="ResponseBody"/> as the origin sends it.
+    /// </summary>
+    public async Task<HttpResponseData> SendRequestHeadAsync(HttpRequestData request, CancellationToken ct)
     {
         await stream.WriteAsync(PrefaceBytes, ct).ConfigureAwait(false);
         await Http2FrameWriter.WriteAsync(stream, Http2FrameType.Settings, Http2FrameFlags.None, 0, _localSettings.ToPayload(), ct).ConfigureAwait(false);
@@ -67,10 +74,56 @@ public sealed class Http2ClientConnection(Stream stream)
         if (hasBody && !_responseComplete)
             await SendBodyAsync(request.Body, ct).ConfigureAwait(false);
 
-        while (!_responseComplete)
+        while (_responseFields is null)
+        {
+            if (_responseComplete) throw new HttpParseException("HTTP/2 response ended before its headers completed.");
             await ReadAndProcessFrameAsync(ct).ConfigureAwait(false);
+        }
 
-        return BuildResponse();
+        return Http2MessageAdapter.ToResponse(_responseFields);
+    }
+
+    /// <summary>
+    /// The response body, read frame by frame on demand, ending at END_STREAM. Only one DATA frame
+    /// is read ahead of the reader, so an origin sending faster than the body is consumed is held
+    /// back by TCP rather than buffered here.
+    /// </summary>
+    public Stream ResponseBody => new BodyStream(this);
+
+    private async ValueTask<int> ReadBodyAsync(Memory<byte> destination, CancellationToken ct)
+    {
+        while (_pendingData.IsEmpty)
+        {
+            if (_responseComplete) return 0;
+            await ReadAndProcessFrameAsync(ct).ConfigureAwait(false);
+        }
+
+        var take = Math.Min(destination.Length, _pendingData.Length);
+        _pendingData[..take].CopyTo(destination);
+        _pendingData = _pendingData[take..];
+        return take;
+    }
+
+    private sealed class BodyStream(Http2ClientConnection connection) : Stream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) =>
+            connection.ReadBodyAsync(buffer, ct);
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            connection.ReadBodyAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     /// <summary>Sends the request body respecting the peer's flow-control window, reading and
@@ -80,7 +133,9 @@ public sealed class Http2ClientConnection(Stream stream)
     private async Task SendBodyAsync(byte[] body, CancellationToken ct)
     {
         var offset = 0;
-        while (offset < body.Length && !_responseComplete)
+        // Stops as well once a response DATA frame is waiting to be read: taking another frame
+        // would overwrite it. The origin has already answered, so the rest of the upload is moot.
+        while (offset < body.Length && !_responseComplete && _pendingData.IsEmpty)
         {
             var available = (int)Math.Max(0, Math.Min(
                 Math.Min(_peerStreamWindow, _peerConnectionWindow),
@@ -163,8 +218,8 @@ public sealed class Http2ClientConnection(Stream stream)
     }
 
     /// <summary>Returns flow-control credit for received DATA so the origin can keep sending.
-    /// Piper buffers the whole body in memory anyway, so there is nothing to gain by withholding
-    /// credit -- the only job here is to never let the peer run out.</summary>
+    /// Credit goes back as each frame is read, and a frame is read only when the body's reader
+    /// wants more, so how fast the body is consumed is what paces the origin.</summary>
     private async Task AcknowledgeDataAsync(Http2Frame frame, CancellationToken ct)
     {
         var length = frame.Payload.Length;
@@ -208,6 +263,14 @@ public sealed class Http2ClientConnection(Stream stream)
         var decoded = _hpackDecoder.Decode(_headerBlockFragment.ToArray());
         _headerBlockFragment.Clear();
 
+        // A second header block after the response head is trailers. They are dropped, as the
+        // HTTP/1.1 relay drops chunked trailers, rather than being mistaken for the head.
+        if (_responseFields is not null)
+        {
+            if (_sawEndStreamOnHeaders) _responseComplete = true;
+            return;
+        }
+
         var statusText = decoded.FirstOrDefault(f => f.Name == ":status").Value;
         if (int.TryParse(statusText, out var status) && status is >= 100 and < 200)
         {
@@ -221,15 +284,11 @@ public sealed class Http2ClientConnection(Stream stream)
 
     private void HandleResponseData(Http2Frame frame)
     {
-        _responseBody.Write(frame.DataPayload.Span);
-        if (frame.HasFlag(Http2FrameFlags.EndStream)) _responseComplete = true;
-    }
+        if (_responseFields is null)
+            throw new HttpParseException("HTTP/2 DATA arrived before the response headers.");
 
-    private HttpResponseData BuildResponse()
-    {
-        if (_responseFields is null) throw new HttpParseException("HTTP/2 response ended before its headers completed.");
-        var response = Http2MessageAdapter.ToResponse(_responseFields);
-        response.Body = _responseBody.ToArray();
-        return response;
+        // Each frame's payload is its own freshly allocated array, so it can be held as it is.
+        _pendingData = frame.DataPayload;
+        if (frame.HasFlag(Http2FrameFlags.EndStream)) _responseComplete = true;
     }
 }

@@ -122,7 +122,49 @@ internal static class Http2StreamingTests
 
             runner.AreEqual("failed", outcome, "the client sees the transfer fail");
         });
+
+        await runner.RunAsync("a raised SETTINGS_INITIAL_WINDOW_SIZE unblocks a stream that had none", async () =>
+        {
+            // RFC 9113 6.9.2: a new initial window moves every open stream's window by the
+            // difference. The stream here opens with a window of zero and is only ever given more
+            // by that SETTINGS change -- no WINDOW_UPDATE is sent -- so the body can arrive only if
+            // the change is applied and the waiting sender is woken by it.
+            await using var harness = await Harness.StartAsync((_, _) =>
+                Task.FromResult<Http2StreamResponse>(new HttpResponseData { StatusCode = 200, Body = "hello"u8.ToArray() }));
+
+            using var tcp = new TcpClient();
+            var url = new Uri($"{harness.BaseUrl}/");
+            await tcp.ConnectAsync(IPAddress.Loopback, url.Port);
+            var wire = tcp.GetStream();
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            await wire.WriteAsync("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"u8.ToArray(), budget.Token);
+            await Http2FrameWriter.WriteAsync(wire, Http2FrameType.Settings, Http2FrameFlags.None, 0, InitialWindow(0), budget.Token);
+
+            var request = new HttpRequestData { Method = "GET", RequestTarget = "/", Url = url, HttpVersion = "HTTP/2" };
+            var block = Piper.Core.Http2.Hpack.HpackEncoder.Encode(Http2MessageAdapter.ToHeaderFields(request));
+            await Http2FrameWriter.WriteHeadersAsync(wire, 1, block, endStream: true, 16_384, budget.Token);
+            await Http2FrameWriter.WriteAsync(wire, Http2FrameType.Settings, Http2FrameFlags.None, 0, InitialWindow(65_535), budget.Token);
+
+            var body = new List<byte>();
+            try
+            {
+                while (true)
+                {
+                    var frame = await Http2FrameReader.ReadRequiredAsync(wire, 16_384, budget.Token);
+                    if (frame.Type != Http2FrameType.Data || frame.StreamId != 1) continue;
+                    body.AddRange(frame.DataPayload.ToArray());
+                    if (frame.HasFlag(Http2FrameFlags.EndStream)) break;
+                }
+            }
+            catch (OperationCanceledException) { /* reported below as a missing body */ }
+
+            runner.AreEqual("hello", Encoding.Latin1.GetString(body.ToArray()), "the body is sent once the window opens");
+        });
     }
+
+    private static byte[] InitialWindow(uint size) =>
+        [0, 4, (byte)(size >> 24), (byte)(size >> 16), (byte)(size >> 8), (byte)size];
 
     private sealed class Harness : IAsyncDisposable
     {

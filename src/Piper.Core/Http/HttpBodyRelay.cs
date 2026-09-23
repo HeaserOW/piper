@@ -151,18 +151,14 @@ public static class HttpBodyRelay
 
             if (!int.TryParse(sizeText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var chunkSize)
                 || chunkSize < 0)
-                throw new HttpParseException($"Bad chunk size: '{sizeText}'");
+                throw new HttpParseException($"Bad chunk size: '{HttpParser.Truncate(sizeText)}'");
 
             if (chunkSize == 0)
             {
                 // Consume trailers up to the terminating blank line. They are dropped rather than
                 // forwarded, which is what buffering did before and what the announced downstream
                 // framing (a plain chunked body, no Trailer header) describes.
-                while (true)
-                {
-                    var trailer = await source.ReadLineAsync(ct).ConfigureAwait(false);
-                    if (trailer is null || trailer.Length == 0) break;
-                }
+                await HttpParser.SkipTrailersAsync(source, ct).ConfigureAwait(false);
                 return total;
             }
 
