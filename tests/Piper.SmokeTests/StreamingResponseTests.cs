@@ -35,7 +35,7 @@ internal static class StreamingResponseTests
 
             var relay = HttpBodyRelay.RelayAsync(
                 source, HttpBodyDescriptor.OfLength(first.Length + second.Length), destination,
-                rechunkDownstream: false, captureLimit: long.MaxValue, CancellationToken.None);
+                rechunkDownstream: false, captureLimit: long.MaxValue, onProgress: null, CancellationToken.None);
 
             await destination.WaitForAsync(first.Length).WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -326,6 +326,209 @@ internal static class StreamingResponseTests
             catch (Exception ex) { outcome = $"faulted with {ex.GetType().Name}"; }
 
             runner.AreEqual("completed", outcome, "the relay ends cleanly when one side does");
+        });
+
+        await RunProgressAsync(runner);
+    }
+
+    // That a body still arriving is visible as such -- its state, how much has come and how much is
+    // due -- which is what the session list draws its progress from.
+    private static async Task RunProgressAsync(TestRunner runner)
+    {
+        await runner.RunAsync("the relay reports its running total after each run it forwards", async () =>
+        {
+            var first = Encoding.Latin1.GetBytes(new string('a', 4096));
+            var second = Encoding.Latin1.GetBytes(new string('b', 6000));
+            var gate = new TaskCompletionSource();
+            var reports = new List<long>();
+
+            using var source = new HttpStreamReader(new GatedStream(first, gate.Task, second));
+            var relay = HttpBodyRelay.RelayAsync(
+                source, HttpBodyDescriptor.OfLength(first.Length + second.Length), new RecordingStream(),
+                rechunkDownstream: false, captureLimit: 16, total => { lock (reports) reports.Add(total); },
+                CancellationToken.None);
+
+            runner.IsTrue(await Poll.UntilAsync(() => { lock (reports) return reports.Count > 0 && reports[^1] == first.Length; }),
+                "the part that has arrived is reported while the rest is held back");
+
+            gate.SetResult();
+            var result = await relay.WaitAsync(TimeSpan.FromSeconds(10));
+
+            long[] seen;
+            lock (reports) seen = [.. reports];
+            runner.IsTrue(seen.Zip(seen.Skip(1)).All(pair => pair.First < pair.Second), "the total only ever rises");
+            runner.AreEqual(result.TotalBytes, seen[^1], "and ends at the whole body");
+            runner.AreEqual(16, result.Captured.Length, "counting the bytes relayed, not the ones kept");
+        });
+
+        await runner.RunAsync("the relay reports progress for chunked and close-delimited bodies too", async () =>
+        {
+            var chunked = new List<long>();
+            using (var reader = new HttpStreamReader(new MemoryStream("5\r\nhello\r\n3\r\nabc\r\n0\r\n\r\n"u8.ToArray())))
+                await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.Chunked, Stream.Null,
+                    rechunkDownstream: false, long.MaxValue, chunked.Add, CancellationToken.None);
+            runner.AreEqual("5,8", string.Join(",", chunked), "a chunked body counts its content, not its framing");
+
+            var untilClose = new List<long>();
+            using (var reader = new HttpStreamReader(new MemoryStream(new byte[10])))
+                await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.UntilClose, Stream.Null,
+                    rechunkDownstream: false, long.MaxValue, untilClose.Add, CancellationToken.None);
+            runner.AreEqual(10L, untilClose.LastOrDefault(), "a close-delimited body reports what came before the close");
+
+            var empty = new List<long>();
+            using (var reader = new HttpStreamReader(new MemoryStream()))
+                await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.OfLength(0), Stream.Null,
+                    rechunkDownstream: false, long.MaxValue, empty.Add, CancellationToken.None);
+            runner.AreEqual(0, empty.Count, "an empty body reports nothing");
+
+            var truncated = new List<long>();
+            var threw = false;
+            try
+            {
+                using var reader = new HttpStreamReader(new MemoryStream("hello"u8.ToArray()));
+                await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.OfLength(100), Stream.Null,
+                    rechunkDownstream: false, long.MaxValue, truncated.Add, CancellationToken.None);
+            }
+            catch (HttpParseException) { threw = true; }
+            runner.IsTrue(threw, "a body that ends short of its length still fails");
+            runner.AreEqual(5L, truncated.LastOrDefault(), "having reported only what did arrive");
+        });
+
+        await runner.RunAsync("a chunked body still arriving is shown as receiving, with no total to measure against", async () =>
+        {
+            var gate = new TaskCompletionSource();
+            var first = new string('a', 4096);
+            var second = new string('b', 4096);
+
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream,
+                    $"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{first.Length:x}\r\n{first}\r\n", ct);
+                await gate.Task;
+                await TestRawOrigin.WriteAsync(stream, $"{second.Length:x}\r\n{second}\r\n0\r\n\r\n", ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            using var client = harness.CreateClient();
+            var response = await client.GetAsync($"http://127.0.0.1:{origin.Port}/progress",
+                HttpCompletionOption.ResponseHeadersRead);
+            await using var body = await response.Content.ReadAsStreamAsync();
+            await ReadExactlyAsync(body, new byte[first.Length]);
+
+            // The relay reports after it forwards, so the client can be a moment ahead of it.
+            var session = LastSessionFor(harness, "/progress");
+            runner.IsTrue(await Poll.UntilAsync(() => session.BytesReceived >= first.Length),
+                $"the bytes relayed so far are counted ({session.BytesReceived})");
+
+            runner.AreEqual(SessionState.ReceivingBody, session.State, "the session is receiving its body");
+            runner.IsTrue(session.Completed is null, "and has not completed");
+            runner.AreEqual((long)first.Length, session.ResponseSize, "its size is what has arrived so far");
+            runner.AreEqual(-1L, session.ExpectedResponseBytes, "with no total, since the origin gave none");
+            runner.AreEqual(null, session.ResponseProgress, "and so no share of one");
+            runner.IsTrue(SearchQuery.Parse("is:inflight").Matches(session), "is:inflight finds it");
+
+            gate.SetResult();
+            await ReadExactlyAsync(body, new byte[second.Length]);
+
+            runner.IsTrue(await Poll.UntilAsync(() => session.State == SessionState.Complete),
+                $"it completes once the body has ({session.State})");
+            runner.AreEqual((long)(first.Length + second.Length), session.ResponseSize, "at the whole size");
+            runner.AreEqual(null, session.ResponseProgress, "with no progress left to show");
+        });
+
+        await runner.RunAsync("a Content-Length body still arriving shows how far through it is", async () =>
+        {
+            // Declared far larger than what is sent, as in the oversized-body test above. Beyond
+            // matching a real download, that keeps a scanning antivirus from getting in the way: an
+            // HTTP-inspecting one (seen with ESET) holds back a small Content-Length body until it
+            // is whole, even between two sockets on loopback with no proxy at all, which would
+            // stall this test for reasons that have nothing to do with Piper.
+            const long Declared = 5_000_000_000;
+            var sent = new string('z', 64 * 1024);
+            var clientHasIt = new TaskCompletionSource();
+
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream, $"HTTP/1.1 200 OK\r\nContent-Length: {Declared}\r\n\r\n{sent}", ct);
+                await clientHasIt.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+                return false;   // and closes, far short of what it promised
+            });
+
+            using var harness = new ProxyHarness();
+            using var client = harness.CreateClient();
+            var response = await client.GetAsync($"http://127.0.0.1:{origin.Port}/measured",
+                HttpCompletionOption.ResponseHeadersRead);
+            await using var body = await response.Content.ReadAsStreamAsync();
+            await ReadExactlyAsync(body, new byte[sent.Length]);
+
+            var session = LastSessionFor(harness, "/measured");
+            runner.IsTrue(await Poll.UntilAsync(() => session.BytesReceived >= sent.Length),
+                $"the bytes relayed so far are counted ({session.BytesReceived})");
+            runner.AreEqual(SessionState.ReceivingBody, session.State, "the session is receiving its body");
+            runner.AreEqual(Declared, session.ExpectedResponseBytes, "against the length the origin announced");
+            runner.AreEqual((long)sent.Length, session.ResponseSize, "its size is what has arrived so far");
+            runner.IsTrue(session.ResponseProgress is > 0 and < 1, $"part of the way through it ({session.ResponseProgress})");
+
+            clientHasIt.SetResult();
+
+            runner.IsTrue(await Poll.UntilAsync(() => session.State != SessionState.ReceivingBody),
+                "an origin that stops short does not leave it receiving");
+            runner.AreEqual(SessionState.Failed, session.State, "it is failed");
+            runner.AreEqual((long)sent.Length, session.ResponseSize, "at the size that did arrive, rather than none");
+            runner.AreEqual(null, session.ResponseProgress, "with no progress left to show");
+        });
+
+        await runner.RunAsync("an origin failing mid-body leaves the session failed at the size that arrived", async () =>
+        {
+            var headSeen = new TaskCompletionSource();
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello", ct);
+                await headSeen.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            await RawExchangeAsync(harness, origin, "/partial", "HTTP/1.1", headSeen);
+
+            var session = LastSessionFor(harness, "/partial");
+            runner.IsTrue(await Poll.UntilAsync(() => session.State != SessionState.ReceivingBody),
+                "the session does not stay receiving");
+            runner.AreEqual(SessionState.Failed, session.State, "it is failed");
+            runner.AreEqual(5L, session.ResponseSize, "reporting the bytes that did arrive rather than none");
+            runner.AreEqual(null, session.ResponseProgress, "and no progress");
+        });
+
+        await runner.RunAsync("a response with nothing left to arrive never shows as receiving", async () =>
+        {
+            // Recorded as it happens rather than sampled afterwards: the state would be gone by then.
+            await using var origin = new TestRawOrigin(async (head, stream, ct) =>
+            {
+                var reply = head.Contains(" /no-content ", StringComparison.Ordinal)
+                    ? "HTTP/1.1 204 No Content\r\n\r\n"
+                    : head.Contains(" /empty ", StringComparison.Ordinal)
+                        ? "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+                        : "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";   // HEAD: the length, no body
+                await TestRawOrigin.WriteAsync(stream, reply, ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            var seen = new List<SessionState>();
+            harness.Store.SessionUpdated += (_, e) => { lock (seen) seen.Add(e.Session.State); };
+            using var client = harness.CreateClient();
+
+            foreach (var (method, path) in new[] { (HttpMethod.Head, "/head"), (HttpMethod.Get, "/no-content"), (HttpMethod.Get, "/empty") })
+            {
+                using var response = await client.SendAsync(new HttpRequestMessage(method, $"http://127.0.0.1:{origin.Port}{path}"));
+                runner.IsTrue(await Poll.UntilAsync(() => LastSessionFor(harness, path).State == SessionState.Complete),
+                    $"{method} {path} completes");
+            }
+
+            lock (seen)
+                runner.IsTrue(!seen.Contains(SessionState.ReceivingBody),
+                    $"none of them passes through receiving ({string.Join(",", seen)})");
         });
     }
 

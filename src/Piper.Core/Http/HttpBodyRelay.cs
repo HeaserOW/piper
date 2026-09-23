@@ -41,9 +41,14 @@ public static class HttpBodyRelay
     /// True when the head already written downstream announced chunked transfer coding, so each
     /// relayed run of bytes must be framed as a chunk and the terminator written at the end.
     /// </param>
+    /// <param name="onProgress">
+    /// Given the running total of body bytes after each run is forwarded, on the relaying thread.
+    /// Called for every read, so it must be no more than a store: whoever displays the figure reads
+    /// it at their own pace rather than being told about every chunk.
+    /// </param>
     public static async Task<Result> RelayAsync(
         HttpStreamReader source, HttpBodyDescriptor framing, Stream destination,
-        bool rechunkDownstream, long captureLimit, CancellationToken ct)
+        bool rechunkDownstream, long captureLimit, Action<long>? onProgress, CancellationToken ct)
     {
         if (framing.Framing == HttpBodyFraming.None)
             return new Result([], 0, Complete: true);
@@ -58,19 +63,19 @@ public static class HttpBodyRelay
             {
                 case HttpBodyFraming.Length:
                     total = await RelayLengthAsync(
-                        source, framing.Length, destination, rechunkDownstream, buffer, captured, captureLimit, ct)
+                        source, framing.Length, destination, rechunkDownstream, buffer, captured, captureLimit, onProgress, ct)
                         .ConfigureAwait(false);
                     break;
 
                 case HttpBodyFraming.Chunked:
                     total = await RelayChunkedAsync(
-                        source, destination, rechunkDownstream, buffer, captured, captureLimit, ct)
+                        source, destination, rechunkDownstream, buffer, captured, captureLimit, onProgress, ct)
                         .ConfigureAwait(false);
                     break;
 
                 default:
                     total = await RelayUntilCloseAsync(
-                        source, destination, rechunkDownstream, buffer, captured, captureLimit, ct)
+                        source, destination, rechunkDownstream, buffer, captured, captureLimit, onProgress, ct)
                         .ConfigureAwait(false);
                     break;
             }
@@ -92,7 +97,7 @@ public static class HttpBodyRelay
 
     private static async Task<long> RelayLengthAsync(
         HttpStreamReader source, long length, Stream destination, bool rechunk,
-        byte[] buffer, MemoryStream captured, long captureLimit, CancellationToken ct)
+        byte[] buffer, MemoryStream captured, long captureLimit, Action<long>? onProgress, CancellationToken ct)
     {
         long total = 0;
         while (total < length)
@@ -110,13 +115,14 @@ public static class HttpBodyRelay
             await ForwardAsync(destination, buffer, read, rechunk, ct).ConfigureAwait(false);
             Capture(captured, buffer, read, captureLimit);
             total += read;
+            onProgress?.Invoke(total);
         }
         return total;
     }
 
     private static async Task<long> RelayUntilCloseAsync(
         HttpStreamReader source, Stream destination, bool rechunk,
-        byte[] buffer, MemoryStream captured, long captureLimit, CancellationToken ct)
+        byte[] buffer, MemoryStream captured, long captureLimit, Action<long>? onProgress, CancellationToken ct)
     {
         long total = 0;
         while (true)
@@ -127,6 +133,7 @@ public static class HttpBodyRelay
             await ForwardAsync(destination, buffer, read, rechunk, ct).ConfigureAwait(false);
             Capture(captured, buffer, read, captureLimit);
             total += read;
+            onProgress?.Invoke(total);
         }
     }
 
@@ -138,7 +145,7 @@ public static class HttpBodyRelay
     /// </summary>
     private static async Task<long> RelayChunkedAsync(
         HttpStreamReader source, Stream destination, bool rechunk,
-        byte[] buffer, MemoryStream captured, long captureLimit, CancellationToken ct)
+        byte[] buffer, MemoryStream captured, long captureLimit, Action<long>? onProgress, CancellationToken ct)
     {
         long total = 0;
         while (true)
@@ -174,6 +181,7 @@ public static class HttpBodyRelay
                 Capture(captured, buffer, read, captureLimit);
                 total += read;
                 remaining -= read;
+                onProgress?.Invoke(total);
             }
 
             // Each chunk is followed by its own CRLF, and by nothing else: a chunk that runs on

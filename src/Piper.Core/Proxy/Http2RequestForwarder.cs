@@ -182,9 +182,16 @@ internal static class Http2RequestForwarder
                     // buffered whole must not then be recorded as delivered.
                     if (relayCt.IsCancellationRequested)
                         throw new OperationCanceledException("The stream ended before the body was relayed.", relayCt);
+
+                    // Here rather than before returning: past the check above, the connection has
+                    // queued the HEADERS frame, so only now is the head with the client.
+                    ProxyServer.EnterReceivingBody(session, body);
+                    store.NotifyUpdated(session);
+
                     var relayed = await HttpBodyRelay.RelayAsync(
                         bodyReader!, body, destination,
-                        rechunkDownstream: false, options.MaxCapturedBodyBytes, relayCt).ConfigureAwait(false);
+                        rechunkDownstream: false, options.MaxCapturedBodyBytes, session.ReportBytesReceived, relayCt)
+                        .ConfigureAwait(false);
 
                     inbound.Body = relayed.Captured;
                     inbound.BodyTotalLength = relayed.TotalBytes;
@@ -203,6 +210,10 @@ internal static class Http2RequestForwarder
                 finally
                 {
                     leg.Dispose();
+
+                    // Anything the catch above does not expect still ends the body, so the session
+                    // cannot be left looking as though it were arriving.
+                    if (session.State == SessionState.ReceivingBody) session.State = SessionState.Failed;
                     session.Completed = DateTimeOffset.Now;
                     session.InvalidateSearchIndex();
                     store.NotifyUpdated(session);
