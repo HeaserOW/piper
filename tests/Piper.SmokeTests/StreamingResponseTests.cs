@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using Piper.Core.Http;
@@ -188,6 +189,79 @@ internal static class StreamingResponseTests
                 "and captures the body it relayed");
             runner.IsTrue(session.Response.IsBodyComplete, "flagged as a complete capture");
         });
+
+        // Once the head has gone out, the only honest way to report a failed body is to break the
+        // connection. Writing a 502 there would land inside the response in flight: counted as body
+        // bytes, read as a chunk-size line, or -- on a close-delimited body -- appended to the file
+        // with nothing to tell it apart from what the origin sent.
+        foreach (var (name, head, resets) in new[]
+                 {
+                     ("a Content-Length body", "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhello", false),
+                     ("a chunked body", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", false),
+                     ("a close-delimited body", "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello", true),
+                 })
+        {
+            await runner.RunAsync($"an origin failing inside {name} breaks the client connection instead of answering twice", async () =>
+            {
+                var headSeen = new TaskCompletionSource();
+
+                await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+                {
+                    await TestRawOrigin.WriteAsync(stream, head, ct);
+                    // Held until the client has the head, so the failure is certain to come after
+                    // it rather than racing it.
+                    await headSeen.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+                    // A close-delimited body ends legitimately on an orderly close; only a reset
+                    // makes it a failure. Closed on the socket itself: disposing the stream would
+                    // shut it down first, sending the FIN this is meant to avoid.
+                    if (resets)
+                    {
+                        stream.Socket.LingerState = new LingerOption(true, 0);
+                        stream.Socket.Close();
+                    }
+                    return false;
+                });
+
+                using var harness = new ProxyHarness();
+                using var socket = new TcpClient();
+                await socket.ConnectAsync(IPAddress.Loopback, harness.Port);
+                var proxy = socket.GetStream();
+                var url = $"http://127.0.0.1:{origin.Port}/cut";
+                await proxy.WriteAsync(Encoding.Latin1.GetBytes(
+                    $"GET {url} HTTP/1.1\r\nHost: 127.0.0.1:{origin.Port}\r\n\r\n"));
+
+                using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var received = new List<byte>();
+                var buffer = new byte[4096];
+                var reset = false;
+                try
+                {
+                    while (true)
+                    {
+                        var n = await proxy.ReadAsync(buffer, budget.Token);
+                        if (n == 0) break;
+                        received.AddRange(buffer.AsSpan(0, n));
+                        if (!headSeen.Task.IsCompleted
+                            && Encoding.Latin1.GetString(received.ToArray()).Contains("\r\n\r\n"))
+                            headSeen.SetResult();
+                    }
+                }
+                catch (IOException)
+                {
+                    reset = true;
+                }
+
+                var text = Encoding.Latin1.GetString(received.ToArray());
+                runner.IsTrue(text.StartsWith("HTTP/1.1 200 OK\r\n", StringComparison.Ordinal),
+                    "the origin's head reached the client");
+                var tail = text[(text.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)..];
+                runner.IsTrue(!tail.Contains("HTTP/", StringComparison.Ordinal) && !tail.Contains("Bad Gateway", StringComparison.Ordinal),
+                    $"nothing but body bytes follows it (got \"{tail.ReplaceLineEndings("\\n")}\")");
+                runner.IsTrue(reset, "and the client sees the transfer fail, not end");
+                runner.AreEqual(SessionState.Failed, LastSessionFor(harness, "/cut").State,
+                    "the session is recorded as failed");
+            });
+        }
     }
 
     private sealed class ProxyHarness : IDisposable

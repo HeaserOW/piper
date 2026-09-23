@@ -496,6 +496,12 @@ public sealed class ProxyServer : IAsyncDisposable
         }
 
         var stopwatch = Stopwatch.StartNew();
+
+        // Set just before the first byte of a response is written to the client. Past that point a
+        // failure can no longer be answered with a 502: it would land inside the response already
+        // in flight -- as body bytes, as a corrupt chunk, or, on a close-delimited body, as content
+        // nothing could tell apart from the origin's.
+        var responseStarted = false;
         try
         {
             var outbound = BuildOutboundRequest(request, isUpgrade, _options);
@@ -570,6 +576,7 @@ public sealed class ProxyServer : IAsyncDisposable
             {
                 session.State = SessionState.Complete;
                 session.Completed = DateTimeOffset.Now;
+                responseStarted = true;
                 await clientStream.WriteAsync(response.ToBytes(), ct).ConfigureAwait(false);
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
                 _store.NotifyUpdated(session);
@@ -621,6 +628,7 @@ public sealed class ProxyServer : IAsyncDisposable
                 if (rechunk) inbound.Headers.Set("Transfer-Encoding", "chunked");
             }
 
+            responseStarted = true;
             if (upstreamResponse.IsBuffered)
             {
                 await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
@@ -660,6 +668,14 @@ public sealed class ProxyServer : IAsyncDisposable
             _store.NotifyUpdated(session);
 
             slot.Reset();
+
+            // A reset rather than a FIN, so the client sees the transfer fail. An orderly close
+            // would pass a truncated close-delimited body off as a complete one.
+            if (responseStarted)
+            {
+                AbortConnection(clientSocket);
+                return false;
+            }
 
             try
             {
