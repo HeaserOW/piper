@@ -780,19 +780,48 @@ public sealed class MessageInspector : UserControl
             return;
         }
 
+        RenderMessage(message, newMessage: true);
+    }
+
+    /// <summary>The message on display, or null.</summary>
+    public HttpMessage? Message => _message;
+
+    /// <summary>
+    /// Re-renders the message already on display. A relayed body is filled into the message whose
+    /// head was shown while it was arriving, so <see cref="SetMessage"/> would see the same object
+    /// and keep the empty body. The user's tab is left where it is.
+    /// </summary>
+    public void Reload(HttpMessage message, string summary)
+    {
+        _message = message;
+        _summary.Text = summary;
+        UpdateSummaryMetadata(message);
+        _headers.Clear();
+        RenderMessage(message, newMessage: false);
+    }
+
+    /// <summary>Changes only the summary line, for figures that move while a message arrives.</summary>
+    public void SetSummary(string summary)
+    {
+        if (_summary.Text != summary) _summary.Text = summary;
+    }
+
+    private void RenderMessage(HttpMessage message, bool newMessage)
+    {
         foreach (var header in message.Headers)
             _headers.Add((header.Name, header.Value));
         RenderHeaders();
 
         // Bodies can be large and decoding/formatting them used to happen four times for each
         // selection, whether or not their tabs were ever viewed. Clear stale content now and
-        // render only the most useful tab for a newly selected response.
-        var preserveJsonView = CanPreserveJsonView(message);
+        // render only the most useful tab for a newly selected response. A reload never keeps the
+        // JSON tree: it is the same message object, so it would compare equal to its own stale view.
+        var preserveJsonView = newMessage && CanPreserveJsonView(message);
         ClearDeferredViews(preserveJsonView);
         // Carry the rendered marker forward to the newly selected message. This prevents the
         // normal lazy renderer from rebuilding the identical tree (and collapsing it again).
         if (preserveJsonView) _renderedJson = message;
-        if (_showImageViewer) SelectBestTab();
+        if (newMessage && _showImageViewer) SelectBestTab();
         RenderSelectedTab();
     }
 

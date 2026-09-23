@@ -7,6 +7,9 @@ public enum SessionState
     Pending,
     SendingRequest,
     AwaitingResponse,
+
+    /// <summary>The head has been relayed to the client and the body is still arriving.</summary>
+    ReceivingBody,
     Complete,
     Failed,
     Tunnel,
@@ -34,7 +37,38 @@ public sealed class Session
     public DateTimeOffset Started { get; }
     public DateTimeOffset? Completed { get; set; }
 
-    public SessionState State { get; set; } = SessionState.Pending;
+    private int _state = (int)SessionState.Pending;
+
+    /// <summary>
+    /// Written by a proxy thread and read by the UI thread. Volatile, so that everything the proxy
+    /// set before a transition -- the response, its body, the expected length -- is visible to a
+    /// reader that has seen the new state.
+    /// </summary>
+    public SessionState State
+    {
+        get => (SessionState)Volatile.Read(ref _state);
+        set => Volatile.Write(ref _state, (int)value);
+    }
+
+    private long _bytesReceived;
+
+    /// <summary>Response body bytes relayed so far. Only a relayed body reports this.</summary>
+    public long BytesReceived => Volatile.Read(ref _bytesReceived);
+
+    /// <summary>Called by the relay on a proxy thread after each run of body bytes it forwards.</summary>
+    public void ReportBytesReceived(long total) => Volatile.Write(ref _bytesReceived, total);
+
+    /// <summary>The body length the origin announced for a relayed body; -1 when it did not.</summary>
+    public long ExpectedResponseBytes { get; set; } = -1;
+
+    /// <summary>
+    /// How far through a relayed body of known length the session is, from 0 to 1; null when it is
+    /// not receiving one, or the length was not announced.
+    /// </summary>
+    public double? ResponseProgress =>
+        State == SessionState.ReceivingBody && ExpectedResponseBytes > 0
+            ? Math.Clamp((double)BytesReceived / ExpectedResponseBytes, 0, 1)
+            : null;
 
     public HttpRequestData? Request { get; set; }
     public HttpResponseData? Response { get; set; }
@@ -94,8 +128,9 @@ public sealed class Session
     public long RequestSize => Request?.BodyTotalLength ?? 0;
 
     /// <summary>What the response body weighed on the wire, which is what a size column means --
-    /// not how much of it was kept when only a prefix of a large body is retained.</summary>
-    public long ResponseSize => Response?.BodyTotalLength ?? 0;
+    /// not how much of it was kept when only a prefix of a large body is retained. While a body is
+    /// still being relayed, and after one failed part way, that is the bytes relayed so far.</summary>
+    public long ResponseSize => Math.Max(Response?.BodyTotalLength ?? 0, BytesReceived);
 
     /// <summary>The protocol version the browser actually used talking to Piper. Computed (not
     /// stored) from <see cref="Request"/>'s <c>HttpVersion</c> string, which is already populated

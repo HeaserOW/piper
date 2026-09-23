@@ -212,7 +212,7 @@ internal static class ResponseFramingTests
                 {
                     using var reader = ReaderFor(body);
                     await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.Chunked, Stream.Null,
-                        rechunkDownstream: true, captureLimit: long.MaxValue, CancellationToken.None);
+                        rechunkDownstream: true, captureLimit: long.MaxValue, onProgress: null, CancellationToken.None);
                 }), $"{what} is rejected by the relay too");
             }
 

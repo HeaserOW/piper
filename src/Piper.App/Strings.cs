@@ -85,6 +85,21 @@ internal static class Strings
 
         /// <summary>Shown in the capture grid's Size column when there was no response body.</summary>
         public static string NoBytes => I18n.T("units.noBytes");
+
+        // A body still arriving, as "received/total" in the unit of the total. Compact, because it
+        // has to fit the grid's Size column.
+        public static string ProgressBytes(long received, long total) =>
+            I18n.T("units.progressBytes", ("received", received), ("total", total));
+        public static string ProgressKilobytes(double received, double total) =>
+            I18n.T("units.progressKilobytes", ("received", received), ("total", total));
+        public static string ProgressMegabytes(double received, double total) =>
+            I18n.T("units.progressMegabytes", ("received", received), ("total", total));
+        public static string ProgressGigabytes(double received, double total) =>
+            I18n.T("units.progressGigabytes", ("received", received), ("total", total));
+
+        /// <summary>The long form of a body's progress, for the inspector and the status bar.</summary>
+        public static string OfTotal(string received, string total, double fraction) =>
+            I18n.T("units.ofTotal", ("received", received), ("total", total), ("fraction", fraction));
     }
 
     // ----------------------------------------------------------------------- shell
@@ -435,6 +450,9 @@ internal static class Strings
         public static string PendingDuration => I18n.T("sessionList.pendingDuration");
         public static string Duration(double milliseconds) =>
             I18n.T("sessionList.duration", ("milliseconds", milliseconds));
+        /// <summary>Result column text while the response body is still arriving.</summary>
+        public static string ReceivingResult(string status) =>
+            I18n.T("sessionList.receivingResult", ("status", status));
 
         public static string Resend => I18n.T("sessionList.resend");
         public static string SendToComposer => I18n.T("sessionList.sendToComposer");
@@ -506,6 +524,8 @@ internal static class Strings
             I18n.T("inspector.responseFailed", ("error", error), ("hint", hint));
         public static string ResponseTunnel => I18n.T("inspector.responseTunnel");
         public static string ResponseWaiting => I18n.T("inspector.responseWaiting");
+        public static string ResponseReceiving(string startLine, string progress) =>
+            I18n.T("inspector.responseReceiving", ("startLine", startLine), ("progress", progress));
 
         /// <summary>
         /// The status bar's timing summary, which is assembled from the parts that apply to a given

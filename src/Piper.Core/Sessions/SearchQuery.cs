@@ -437,7 +437,7 @@ public sealed class SearchQuery
         "auto" or "autoresponder" or "faked" => s => s.IsAutoResponded,
         "error" or "failed" => s => s.State == SessionState.Failed || s.StatusCode >= 400,
         "complete" or "done" => s => s.State == SessionState.Complete,
-        "pending" or "inflight" => s => s.State is SessionState.Pending or SessionState.SendingRequest or SessionState.AwaitingResponse,
+        "pending" or "inflight" => s => s.State is SessionState.Pending or SessionState.SendingRequest or SessionState.AwaitingResponse or SessionState.ReceivingBody,
         "redirect" => s => s.StatusCode is >= 300 and < 400,
         "ok" or "success" => s => s.StatusCode is >= 200 and < 300,
         "json" => s => s.ContentType.Contains("json", StringComparison.OrdinalIgnoreCase),

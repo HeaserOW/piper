@@ -346,6 +346,15 @@ This matters in three ways:
   media never complete, so a proxy that waits for the end of the message waits for ever.
 - **Size is not a limit.** There is no ceiling on what can pass through.
 
+A body still arriving is shown as such in the grid. Its Result reads `↓ 200` instead of `200`, its
+Time counts up, and its Size grows as the bytes come in. When the origin announced a
+`Content-Length`, Size reads `3.0/8.0 MB` over a fill showing how far through the body is; without
+one there is nothing to measure against, so there is no fill, only the count. The status bar and
+the inspector give the long form, `3.00 MB of 8.00 MB (37%)`, and `is:inflight` finds these
+sessions. The figures are read at the grid's refresh rate rather than reported per chunk, so a
+download costs no more than repainting its row. A body that fails part way keeps the size that did
+arrive.
+
 What *is* bounded is how much of a body is kept for inspection, by two limits:
 
 | | |
