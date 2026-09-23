@@ -196,7 +196,7 @@ internal static class Http2ConnectionTests
                 {
                     using var c = client;
                     c.NoDelay = true;
-                    var connection = new Http2Connection(c.GetStream(), handler);
+                    var connection = new Http2Connection(c.GetStream(), async (r, t) => await handler(r, t).ConfigureAwait(false));
                     try { await connection.RunAsync(_cts.Token).ConfigureAwait(false); }
                     catch { /* test asserts on the client side */ }
                 }, _cts.Token);

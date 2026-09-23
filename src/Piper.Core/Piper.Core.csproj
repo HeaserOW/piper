@@ -8,4 +8,11 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The smoke tests assert on a few internals that exist for diagnosis rather than for
+         callers, such as how often an HTTP/2 sender had to wait for flow-control window.
+         Widening those to public to make them testable would be the worse trade. -->
+    <InternalsVisibleTo Include="Piper.SmokeTests" />
+  </ItemGroup>
+
 </Project>

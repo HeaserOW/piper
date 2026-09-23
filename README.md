@@ -319,6 +319,10 @@ whole message first. What the origin used to frame the body is what Piper sends:
 is passed through unchanged, a chunked body stays chunked. Nothing is re-framed, because a client
 that draws a progress bar from `Content-Length` has nothing to draw with if the length is dropped.
 
+Both legs do this. An HTTP/1.1 response is relayed onward as it is read; an HTTP/2 response is
+framed into DATA frames as the bytes arrive, and a sender that exhausts the peer flow-control
+window resumes on the WINDOW_UPDATE that grants more rather than on the next tick of a timer.
+
 This matters in three ways:
 
 - **A download starts immediately.** Buffering meant the client saw nothing until the last byte had

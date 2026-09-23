@@ -67,7 +67,7 @@ internal sealed class TestHttp2Origin : IAsyncDisposable
         }
         catch { await ssl.DisposeAsync().ConfigureAwait(false); return; }
 
-        var connection = new Http2Connection(ssl, _handler);
+        var connection = new Http2Connection(ssl, async (r, c) => await _handler(r, c).ConfigureAwait(false));
         try { await connection.RunAsync(_cts.Token).ConfigureAwait(false); }
         catch { /* the test asserts on the client side */ }
         finally { await ssl.DisposeAsync().ConfigureAwait(false); }

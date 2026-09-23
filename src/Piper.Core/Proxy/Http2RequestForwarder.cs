@@ -16,7 +16,7 @@ namespace Piper.Core.Proxy;
 /// </summary>
 internal static class Http2RequestForwarder
 {
-    public static async Task<HttpResponseData> ForwardAsync(
+    public static async Task<Http2StreamResponse> ForwardAsync(
         HttpRequestData request, ProxyOptions options, SessionStore store, Http3.AltSvcCache altSvc,
         string clientEndpoint, string processName, CancellationToken ct)
     {
@@ -88,6 +88,10 @@ internal static class Http2RequestForwarder
         var stopwatch = Stopwatch.StartNew();
         UpstreamConnection? upstream = null;
 
+        // Set when the upstream leg left its body on the connection for relaying; null when the
+        // whole message is already in hand, as it is over HTTP/2 and HTTP/3.
+        HttpBodyDescriptor? framing = null;
+
         try
         {
             var outbound = ProxyServer.BuildOutboundRequest(request, preserveUpgrade: false, options);
@@ -117,11 +121,7 @@ internal static class Http2RequestForwarder
 
                 var sent = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
                 response = sent.Head;
-
-                // The browser-facing HTTP/2 side still frames a response from a body it holds in
-                // full, so an HTTP/1.1 upstream leg is read to the end here rather than relayed.
-                if (!sent.IsBuffered)
-                    response.Body = await HttpParser.ReadBodyAsync(upstream.Reader, sent.Body, ct).ConfigureAwait(false);
+                framing = sent.IsBuffered ? null : sent.Body;
             }
 
             session.TimeToFirstByte = stopwatch.Elapsed - beforeResponse;
@@ -133,15 +133,56 @@ internal static class Http2RequestForwarder
             // the leg they actually travelled: the browser's choice for the request, the real
             // origin's choice for the response. That is the whole point of a debugging proxy that
             // translates between protocol versions.
+            var canHaveBody = HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode);
             var inbound = ProxyServer.BuildInboundResponse(
-                response, HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode), clientWantsClose: true);
+                response, framing is null && canHaveBody, clientWantsClose: true);
             inbound.Headers.Remove("Connection"); // downstream-wire plumbing; h2 has no such header at all
             session.Response = inbound;
-            session.State = SessionState.Complete;
-            session.Completed = DateTimeOffset.Now;
             session.InvalidateSearchIndex();
+
+            if (framing is not { } body)
+            {
+                session.State = SessionState.Complete;
+                session.Completed = DateTimeOffset.Now;
+                store.NotifyUpdated(session);
+                return inbound;
+            }
+
+            // The body is still on the upstream connection, so it is relayed into the HTTP/2 stream
+            // as it arrives rather than read here first. The connection has to outlive this method
+            // for that, so ownership of it moves into the relay and the finally below lets it go.
+            var leg = upstream!;
+            upstream = null;
             store.NotifyUpdated(session);
-            return inbound;
+
+            return new Http2StreamResponse(inbound, async (destination, relayCt) =>
+            {
+                try
+                {
+                    var relayed = await HttpBodyRelay.RelayAsync(
+                        leg.Reader, body, destination,
+                        rechunkDownstream: false, options.MaxCapturedBodyBytes, relayCt).ConfigureAwait(false);
+
+                    inbound.Body = relayed.Captured;
+                    inbound.BodyTotalLength = relayed.TotalBytes;
+                    session.State = SessionState.Complete;
+                }
+                catch (Exception relayError) when (relayError is SocketException or IOException
+                                                       or HttpParseException or OperationCanceledException)
+                {
+                    // The head is already with the client and cannot be taken back; the stream ends
+                    // short and the session says why rather than looking like a clean success.
+                    session.State = SessionState.Failed;
+                    session.Error = ProxyServer.Describe(relayError);
+                }
+                finally
+                {
+                    leg.Dispose();
+                    session.Completed = DateTimeOffset.Now;
+                    session.InvalidateSearchIndex();
+                    store.NotifyUpdated(session);
+                }
+            });
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
                                        or HttpParseException or OperationCanceledException)
