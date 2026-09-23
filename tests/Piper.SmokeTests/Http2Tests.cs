@@ -79,6 +79,34 @@ internal static class Http2Tests
                 runner.AreEqual($"GET /item/{i}", body, $"request {i} got exactly its own response");
         });
 
+        await runner.RunAsync("a bodiless response from an HTTP/1.1 origin ends on the h2 HEADERS frame", async () =>
+        {
+            // HEAD, 204 and 304 end after their header section (RFC 9110 6.4.1). Handed a relay
+            // instead, the h2 leg would send HEADERS without END_STREAM and then an empty DATA
+            // frame, where the h1 leg sends nothing at all.
+            foreach (var (method, path) in new[] { ("HEAD", "/hello"), ("GET", "/no-content") })
+            {
+                var request = new HttpRequestData
+                {
+                    Method = method,
+                    RequestTarget = path,
+                    HttpVersion = "HTTP/2",
+                    Url = new Uri($"{originBase}{path}"),
+                };
+                request.Headers.Set("Host", $"127.0.0.1:{origin.Port}");
+
+                var forwardStore = new SessionStore();
+                var response = await Http2RequestForwarder.ForwardAsync(
+                    request, options, forwardStore, new Piper.Core.Http3.AltSvcCache(), "test", "test",
+                    CancellationToken.None);
+
+                runner.IsTrue(response.RelayBody is null && response.Head.Body.Length == 0,
+                    $"{method} {path}: no body is left to relay (status {response.Head.StatusCode})");
+                runner.AreEqual(SessionState.Complete, forwardStore.Snapshot().Single().State,
+                    $"{method} {path}: and the session completes without waiting on one");
+            }
+        });
+
         await runner.RunAsync("an untrusted upstream certificate reports why, not just that it was rejected", async () =>
         {
             // Deliberately not setting ValidateUpstreamCertificates = false: the origin's leaf is
@@ -324,6 +352,9 @@ internal static class Http2Tests
         private static HttpResponseData BuildResponse(HttpRequestData request)
         {
             var path = request.Url?.PathAndQuery ?? request.RequestTarget;
+            if (path.StartsWith("/no-content", StringComparison.Ordinal))
+                return new HttpResponseData { StatusCode = 204, ReasonPhrase = "No Content" };
+
             var body = request.Body.Length > 0
                 ? $"{request.Method} {path} body={Encoding.UTF8.GetString(request.Body)}"
                 : $"{request.Method} {path}";

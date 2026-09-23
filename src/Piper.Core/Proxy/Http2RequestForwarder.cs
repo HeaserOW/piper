@@ -145,7 +145,8 @@ internal static class Http2RequestForwarder
             session.Response = inbound;
             session.InvalidateSearchIndex();
 
-            if (framing is not { } body)
+            // No body to relay -- HEAD, 204, 304 -- ends on the HEADERS frame, as it does on h1.
+            if (framing is not { Framing: not HttpBodyFraming.None } body)
             {
                 session.State = SessionState.Complete;
                 session.Completed = DateTimeOffset.Now;
