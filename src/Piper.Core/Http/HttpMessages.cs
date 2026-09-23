@@ -7,8 +7,30 @@ public abstract class HttpMessage
     public string HttpVersion { get; set; } = "HTTP/1.1";
     public HeaderCollection Headers { get; set; } = new();
 
-    /// <summary>Body exactly as it travelled on the wire, still content-encoded and de-chunked.</summary>
+    /// <summary>Body exactly as it travelled on the wire, still content-encoded and de-chunked.
+    /// When <see cref="IsBodyComplete"/> is false this holds only the start of it.</summary>
     public byte[] Body { get; set; } = [];
+
+    private long? _bodyTotalLength;
+
+    /// <summary>
+    /// How many body bytes actually crossed the wire, which is not always how many were kept.
+    /// </summary>
+    /// <remarks>
+    /// Set explicitly only when a body was relayed rather than buffered; otherwise it is simply the
+    /// length of <see cref="Body"/>. Everything reporting a size must read this rather than
+    /// <c>Body.Length</c>, or a relayed body is reported at the size of the fragment retained --
+    /// mitmproxy's HAR export has that bug, where a streamed body is indistinguishable from an
+    /// empty one.
+    /// </remarks>
+    public long BodyTotalLength
+    {
+        get => _bodyTotalLength ?? Body.LongLength;
+        set => _bodyTotalLength = value;
+    }
+
+    /// <summary>True when <see cref="Body"/> is the whole body rather than a retained prefix.</summary>
+    public bool IsBodyComplete => Body.LongLength >= BodyTotalLength;
 
     public string? ContentType => Headers["Content-Type"];
 
@@ -54,6 +76,7 @@ public sealed class HttpRequestData : HttpMessage
         Url = Url,
         Headers = Headers.Clone(),
         Body = (byte[])Body.Clone(),
+        BodyTotalLength = BodyTotalLength,
     };
 
     /// <summary>Serialises in origin-form, which is what an upstream origin server expects.</summary>
@@ -87,6 +110,7 @@ public sealed class HttpResponseData : HttpMessage
         HttpVersion = HttpVersion,
         Headers = Headers.Clone(),
         Body = (byte[])Body.Clone(),
+        BodyTotalLength = BodyTotalLength,
     };
 
     public byte[] ToBytes()

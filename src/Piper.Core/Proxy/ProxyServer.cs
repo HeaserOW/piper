@@ -25,6 +25,19 @@ public sealed class ProxyServer : IAsyncDisposable
         "TE", "Trailer", "Upgrade", "Proxy-Authenticate", "Proxy-Authorization",
     ];
 
+    /// <summary>
+    /// How much of a body is kept for the capture. Relaying is never refused because of it: a
+    /// download larger than this still reaches the client whole, only the retained copy stops.
+    /// </summary>
+    /// <remarks>
+    /// Refusing outright is what the parser used to do, and it turned a large download into a 502
+    /// before a single body byte had been read. Keeping everything is the opposite failure: a
+    /// modpack install fetches hundreds of files, and retaining every one of them is what drove
+    /// the process into collecting garbage instead of proxying. Bounding what is kept is what lets
+    /// relaying be unconditional.
+    /// </remarks>
+    private const long MaxCapturedBodyBytes = 256L * 1024 * 1024;
+
     private readonly ProxyOptions _options;
     private readonly CertificateAuthority _ca;
     private readonly SessionStore _store;
@@ -517,11 +530,17 @@ public sealed class ProxyServer : IAsyncDisposable
             // HTTP/3 first when this origin has advertised it, falling through to TCP on any
             // failure. An upgrade handshake is excluded: 101 hands the connection to another
             // protocol, which has no meaning over QUIC.
-            var response = isUpgrade
+            var overHttp3 = isUpgrade
                 ? null
                 : await Http3Attempt.TryFetchAsync(outbound, request.Url, _options, _altSvc, MarkSent, ct).ConfigureAwait(false);
 
-            if (response is null)
+            // HTTP/3 and HTTP/2 upstream legs still hand back a message read in full; only the
+            // HTTP/1.1 leg leaves its body on the connection to be relayed.
+            var upstreamResponse = overHttp3 is not null
+                ? new UpstreamResponse(overHttp3, HttpBodyDescriptor.None, IsBuffered: true)
+                : default;
+
+            if (overHttp3 is null)
             {
                 var upstream = slot.Connection;
                 if (upstream is not null && (!upstream.Matches(host, port, targetIsTls, _options.HostRemapping.Revision) || !upstream.IsUsable))
@@ -539,18 +558,21 @@ public sealed class ProxyServer : IAsyncDisposable
                 }
 
                 session.ServerEndpoint = upstream.RemoteEndpoint;
-                response = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
+                upstreamResponse = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
 
                 // Http2ClientConnection is one-shot, so an h2 upstream can never be pooled.
                 if (upstream.IsHttp2) slot.Reset();
             }
 
+            var response = upstreamResponse.Head;
+
+            // Genuinely the time to the first byte now. While the whole message was read before
+            // returning, this measured the time to the last one, so the column reported how long
+            // each download was rather than how responsive the origin was.
             session.TimeToFirstByte = stopwatch.Elapsed - beforeResponse;
             _altSvc.RecordAltSvc(host, response.Headers["Alt-Svc"]);
 
             session.Response = response;
-            session.State = SessionState.Complete;
-            session.Completed = DateTimeOffset.Now;
             session.InvalidateSearchIndex();
 
             // 101 hands the connection over to another protocol (WebSocket, h2c). Relay
@@ -559,6 +581,8 @@ public sealed class ProxyServer : IAsyncDisposable
             // connection the 101 arrived on.
             if (response.StatusCode == 101 && slot.Connection is { } upgraded)
             {
+                session.State = SessionState.Complete;
+                session.Completed = DateTimeOffset.Now;
                 await clientStream.WriteAsync(response.ToBytes(), ct).ConfigureAwait(false);
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
                 _store.NotifyUpdated(session);
@@ -579,23 +603,66 @@ public sealed class ProxyServer : IAsyncDisposable
                 return false;
             }
 
+            var canHaveBody = HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode);
+            var serverWantsClose = response.Headers.HasToken("Connection", "close")
+                                   || response.HttpVersion == "HTTP/1.0";
+
+            // A body still to be read is delimited by the connection closing only when nothing
+            // else frames it, and then neither leg can carry anything after it.
+            var closeAfterBody = !upstreamResponse.IsBuffered
+                                 && upstreamResponse.Body.Framing == HttpBodyFraming.UntilClose;
+
             var inbound = BuildInboundResponse(
-                response, HttpParser.ResponseCanHaveBody(request.Method, response.StatusCode), clientWantsClose);
+                response, upstreamResponse.IsBuffered && canHaveBody,
+                clientWantsClose || closeAfterBody);
+
             // This clone's HttpVersion is only ever used for the literal wire bytes about to go
             // out on *this* h1.1 connection -- it must say "HTTP/1.1" no matter what the upstream
             // leg actually spoke (h2, or a legacy 1.0 origin). session.Response above still holds
             // the original, untouched `response`, so the captured/displayed HttpVersion keeps
             // recording the real upstream protocol.
             inbound.HttpVersion = "HTTP/1.1";
-            await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
-            await clientStream.FlushAsync(ct).ConfigureAwait(false);
+
+            var rechunk = false;
+            if (!upstreamResponse.IsBuffered)
+            {
+                // Framing is carried over from the origin rather than recomputed, because there is
+                // no buffered body left to recompute it from -- and because a client that reports
+                // progress from Content-Length shows a frozen bar for the whole transfer if the
+                // length is dropped, which looks exactly like the hang being fixed here.
+                rechunk = upstreamResponse.Body.Framing == HttpBodyFraming.Chunked;
+                if (rechunk) inbound.Headers.Set("Transfer-Encoding", "chunked");
+            }
+
+            if (upstreamResponse.IsBuffered)
+            {
+                await clientStream.WriteAsync(inbound.ToBytes(), ct).ConfigureAwait(false);
+                await clientStream.FlushAsync(ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // Head first, then the body as it arrives. This is the whole point: the client can
+                // start writing the file to disk while the origin is still sending it.
+                await clientStream.WriteAsync(Encoding.Latin1.GetBytes(inbound.HeadAsText()), ct).ConfigureAwait(false);
+                await clientStream.FlushAsync(ct).ConfigureAwait(false);
+                _store.NotifyUpdated(session);
+
+                var relayed = await HttpBodyRelay.RelayAsync(
+                    slot.Connection!.Reader, upstreamResponse.Body, clientStream,
+                    rechunk, MaxCapturedBodyBytes, ct).ConfigureAwait(false);
+
+                response.Body = relayed.Captured;
+                response.BodyTotalLength = relayed.TotalBytes;
+                session.InvalidateSearchIndex();
+            }
+
+            session.State = SessionState.Complete;
+            session.Completed = DateTimeOffset.Now;
             _store.NotifyUpdated(session);
 
-            var serverWantsClose = response.Headers.HasToken("Connection", "close")
-                                   || response.HttpVersion == "HTTP/1.0";
-            if (serverWantsClose) slot.Reset();
+            if (serverWantsClose || closeAfterBody) slot.Reset();
 
-            return !clientWantsClose && !serverWantsClose;
+            return !clientWantsClose && !serverWantsClose && !closeAfterBody;
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
                                        or HttpParseException or OperationCanceledException)

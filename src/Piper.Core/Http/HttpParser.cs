@@ -187,7 +187,11 @@ public static class HttpParser
     }
 
     /// <summary>Buffers a whole body according to a framing already worked out from the headers.</summary>
-    private static async Task<byte[]> ReadBodyAsync(
+    /// <remarks>
+    /// The counterpart to <see cref="ReadResponseHeadAsync"/> for a caller that wants the message
+    /// in hand rather than relayed onward -- the Composer, and the legs that cannot stream yet.
+    /// </remarks>
+    public static async Task<byte[]> ReadBodyAsync(
         HttpStreamReader reader, HttpBodyDescriptor body, CancellationToken ct)
     {
         switch (body.Framing)

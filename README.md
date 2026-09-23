@@ -190,6 +190,8 @@ targets, so `Invoke-WebRequest -Proxy` would never reach Piper.
   translates between h1.1 and h2 on either side and records which protocol each leg actually used
 - HTTP/3 to origin servers (from-scratch QPACK and framing over `System.Net.Quic`), off by
   default - see below
+- Response bodies relayed as they arrive rather than buffered whole, so a download starts at
+  once, a stream that never ends can be captured, and size is not a limit - see below
 - Chunked de-framing; gzip, deflate and brotli decoding for display
 - WebSocket / `101 Switching Protocols` upgrade pass-through, relayed in both directions until
   both sides close rather than until the first one does
@@ -309,6 +311,32 @@ NuGet packages and nothing extra installed. The HTTP/3 layer above it (framing, 
 from-scratch like the rest. QPACK uses the static table only and advertises a zero-capacity
 dynamic table, which RFC 9204 explicitly permits and which removes the encoder/decoder instruction
 streams entirely.
+
+## Large and long-lived responses
+
+Piper forwards a response body to the client as it arrives from the origin, rather than reading the
+whole message first. What the origin used to frame the body is what Piper sends: a `Content-Length`
+is passed through unchanged, a chunked body stays chunked. Nothing is re-framed, because a client
+that draws a progress bar from `Content-Length` has nothing to draw with if the length is dropped.
+
+This matters in three ways:
+
+- **A download starts immediately.** Buffering meant the client saw nothing until the last byte had
+  arrived, so a large file was indistinguishable from a hang, and a downloader with its own stall
+  timeout would give up part way through a transfer that was working.
+- **A response that never ends can be captured at all.** Server-sent events, long polling and live
+  media never complete, so a proxy that waits for the end of the message waits for ever.
+- **Size is not a limit.** There is no ceiling on what can pass through.
+
+What *is* bounded is how much of a body is kept for inspection. Piper retains the start of a body
+and records the full length it saw, so the session grid and the inspector report what actually
+crossed the wire even when only part of it was kept. Bounding what is retained is what lets the
+relay be unconditional: a modpack install fetching hundreds of files would otherwise spend its time
+collecting garbage instead of proxying.
+
+The trade this makes is that a body can no longer be edited on its way back to the client. Piper
+has never offered that -- the AutoResponder replaces responses rather than editing real ones -- so
+there is nothing to give up here, which is why there is no buffering mode to switch between.
 
 ## Not implemented
 

@@ -4,6 +4,19 @@ using Piper.Core.Http2;
 namespace Piper.Core.Proxy;
 
 /// <summary>
+/// What an origin answered with, and whether its body is already in hand.
+/// </summary>
+/// <param name="Head">Status line and headers. Carries the body too when <paramref name="IsBuffered"/>.</param>
+/// <param name="Body">How the body is framed, for a caller that still has to read it.</param>
+/// <param name="IsBuffered">
+/// True when the whole message was read before returning, which is still the case for HTTP/2 and
+/// HTTP/3 upstream legs. False for HTTP/1.1, where the body is left on the connection so it can be
+/// relayed onward as it arrives.
+/// </param>
+internal readonly record struct UpstreamResponse(
+    HttpResponseData Head, HttpBodyDescriptor Body, bool IsBuffered);
+
+/// <summary>
 /// Sends one request over an already-connected <see cref="UpstreamConnection"/>, branching on
 /// whichever protocol ALPN actually negotiated. Shared by every downstream direction that can
 /// reach an ALPN-h2-capable upstream (the HTTP/1.1 loop in <see cref="ProxyServer"/> and
@@ -18,13 +31,15 @@ internal static class UpstreamRequestSender
     /// <c>AwaitingResponse</c> and start timing time-to-first-byte. For HTTP/2, sending and
     /// receiving are fused into one call on <see cref="Http2ClientConnection"/>, so this fires
     /// immediately before that call rather than after only the request bytes are flushed.</param>
-    public static async Task<HttpResponseData> SendAsync(
+    public static async Task<UpstreamResponse> SendAsync(
         UpstreamConnection upstream, HttpRequestData outbound, Action onRequestSent, CancellationToken ct)
     {
         if (upstream.IsHttp2)
         {
             onRequestSent();
-            return await new Http2ClientConnection(upstream.Stream).SendRequestAsync(outbound, ct).ConfigureAwait(false);
+            var buffered = await new Http2ClientConnection(upstream.Stream)
+                .SendRequestAsync(outbound, ct).ConfigureAwait(false);
+            return new UpstreamResponse(buffered, HttpBodyDescriptor.None, IsBuffered: true);
         }
 
         MakeValidHttp11(outbound);
@@ -32,7 +47,13 @@ internal static class UpstreamRequestSender
         await upstream.Stream.WriteAsync(outbound.ToOriginFormBytes(), ct).ConfigureAwait(false);
         await upstream.Stream.FlushAsync(ct).ConfigureAwait(false);
         onRequestSent();
-        return await HttpParser.ReadResponseAsync(upstream.Reader, outbound.Method, ct).ConfigureAwait(false);
+
+        // Head only. The body stays on the connection so the caller can decide whether to relay it
+        // onward as it arrives or buffer it, which is a decision that has to be made here -- once
+        // any of the body has been read there is no going back to streaming it.
+        var (head, body) = await HttpParser
+            .ReadResponseHeadAsync(upstream.Reader, outbound.Method, ct).ConfigureAwait(false);
+        return new UpstreamResponse(head, body, IsBuffered: false);
     }
 
     /// <summary>

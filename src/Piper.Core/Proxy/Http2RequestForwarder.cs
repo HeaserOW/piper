@@ -115,7 +115,13 @@ internal static class Http2RequestForwarder
                 session.ConnectTime = stopwatch.Elapsed - connectStart;
                 session.ServerEndpoint = upstream.RemoteEndpoint;
 
-                response = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
+                var sent = await UpstreamRequestSender.SendAsync(upstream, outbound, MarkSent, ct).ConfigureAwait(false);
+                response = sent.Head;
+
+                // The browser-facing HTTP/2 side still frames a response from a body it holds in
+                // full, so an HTTP/1.1 upstream leg is read to the end here rather than relayed.
+                if (!sent.IsBuffered)
+                    response.Body = await HttpParser.ReadBodyAsync(upstream.Reader, sent.Body, ct).ConfigureAwait(false);
             }
 
             session.TimeToFirstByte = stopwatch.Elapsed - beforeResponse;
