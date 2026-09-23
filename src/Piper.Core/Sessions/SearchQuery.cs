@@ -410,7 +410,29 @@ public sealed class SearchQuery
 
         return IsHostFragment(pattern)
             ? host.Contains(pattern, StringComparison.OrdinalIgnoreCase)
-            : IsSameOrSubdomain(host.TrimEnd('.'), pattern);
+            : IsSameOrSubdomain(WithoutPort(host).TrimEnd('.'), pattern);
+    }
+
+    /// <summary>
+    /// The host without a trailing <c>:port</c>. <see cref="Session.Host"/> is the raw Host header
+    /// whenever the request line had no parseable URL, so it can carry one, and "example.com:8443"
+    /// has to match the domain example.com like any other request to it. A bracketed IPv6 literal
+    /// keeps its brackets ("[::1]:8080" is "[::1]"), and a bare IPv6 address, whose colons are not a
+    /// port separator, is left alone.
+    /// </summary>
+    private static string WithoutPort(string host)
+    {
+        if (host.StartsWith('['))
+        {
+            var close = host.IndexOf(']');
+            return close > 0 ? host[..(close + 1)] : host;
+        }
+
+        var colon = host.IndexOf(':');
+        if (colon <= 0 || colon != host.LastIndexOf(':')) return host;
+
+        var port = host.AsSpan(colon + 1);
+        return port.Length is > 0 and <= 5 && !port.ContainsAnyExcept("0123456789") ? host[..colon] : host;
     }
 
     private static bool IsHostFragment(string pattern)

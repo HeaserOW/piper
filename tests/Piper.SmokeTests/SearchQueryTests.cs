@@ -276,6 +276,25 @@ internal static class SearchQueryTests
             runner.IsTrue(Hits("-domain:example.com", lookalike) && !Hits("-domain:example.com", sub),
                 "negation hides the domain and nothing else");
             runner.AreEqual(1, SearchQuery.Parse("domain:*").Warnings.Count, "a pattern with no domain in it warns");
+
+            // Session.Host is the raw Host header when the request line had no parseable URL, so it
+            // can carry a port. A domain must still match it, or a show-only list saved as
+            // "example.com" would discard those sessions at admission.
+            static Session RawHost(string hostHeader)
+            {
+                var request = new HttpRequestData { Method = "GET", RequestTarget = "/" };
+                request.Headers.Add("Host", hostHeader);
+                return new Session { Request = request, State = SessionState.Complete };
+            }
+
+            runner.AreEqual("example.com:8443", RawHost("example.com:8443").Host, "precondition: the host keeps its port");
+            runner.IsTrue(Hits("domain:example.com", RawHost("example.com:8443")), "a host with a port matches its domain");
+            runner.IsTrue(Hits("domain:example.com", RawHost("api.example.com:443")), "and so does a subdomain with one");
+            runner.IsTrue(!Hits("domain:example.com", RawHost("evil-example.com:8443")), "a lookalike with a port still does not");
+            runner.IsTrue(Hits("domain:10.0.0.1", RawHost("10.0.0.1:8080")), "an IPv4 address with a port matches the address");
+            runner.IsTrue(Hits("domain:[::1]", RawHost("[::1]:8080")), "a bracketed IPv6 literal with a port matches it");
+            runner.IsTrue(!Hits("domain:example.com", RawHost("example.com:notaport")), "a colon that is not a port is not stripped");
+            runner.IsTrue(!Hits("-domain:example.com", RawHost("example.com:8443")), "hiding the domain hides its hosts with a port too");
             return Task.CompletedTask;
         });
 
