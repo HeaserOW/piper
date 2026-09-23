@@ -669,15 +669,25 @@ public sealed class ProxyServer : IAsyncDisposable
                 // start writing the file to disk while the origin is still sending it.
                 await clientStream.WriteAsync(Encoding.Latin1.GetBytes(inbound.HeadAsText()), ct).ConfigureAwait(false);
                 await clientStream.FlushAsync(ct).ConfigureAwait(false);
+                EnterReceivingBody(session, upstreamResponse.Body);
                 _store.NotifyUpdated(session);
 
-                var relayed = await HttpBodyRelay.RelayAsync(
-                    upstreamResponse.BodyReader!, upstreamResponse.Body, clientStream,
-                    rechunk, _options.MaxCapturedBodyBytes, ct).ConfigureAwait(false);
+                var relayFinished = false;
+                try
+                {
+                    var relayed = await HttpBodyRelay.RelayAsync(
+                        upstreamResponse.BodyReader!, upstreamResponse.Body, clientStream,
+                        rechunk, _options.MaxCapturedBodyBytes, session.ReportBytesReceived, ct).ConfigureAwait(false);
 
-                response.Body = relayed.Captured;
-                response.BodyTotalLength = relayed.TotalBytes;
-                session.InvalidateSearchIndex();
+                    response.Body = relayed.Captured;
+                    response.BodyTotalLength = relayed.TotalBytes;
+                    session.InvalidateSearchIndex();
+                    relayFinished = true;
+                }
+                finally
+                {
+                    if (!relayFinished) LeaveReceivingBodyFailed(session, _store);
+                }
             }
 
             session.State = SessionState.Complete;
@@ -875,6 +885,34 @@ public sealed class ProxyServer : IAsyncDisposable
             sb.Append(current.GetType().Name).Append(": ").Append(current.Message);
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Marks a session whose head has gone to the client as still receiving its body, when there is
+    /// one to relay. A HEAD, 204, 304 or zero-length response has nothing left to arrive and goes
+    /// straight to complete, so it never flickers through the state.
+    /// </summary>
+    internal static void EnterReceivingBody(Session session, HttpBodyDescriptor body)
+    {
+        if (body.Framing == HttpBodyFraming.None) return;
+        if (body is { Framing: HttpBodyFraming.Length, Length: 0 }) return;
+
+        // Before the state: the UI reads the state first and the expected length after it.
+        session.ExpectedResponseBytes = body.Framing == HttpBodyFraming.Length ? body.Length : -1;
+        session.State = SessionState.ReceivingBody;
+    }
+
+    /// <summary>
+    /// Ends a relay that stopped without finishing. The callers' catch blocks record the failures
+    /// they expect, with the reason; this covers anything else, so a session can never be left
+    /// looking as though its body were still arriving.
+    /// </summary>
+    internal static void LeaveReceivingBodyFailed(Session session, SessionStore store)
+    {
+        if (session.State != SessionState.ReceivingBody) return;
+        session.State = SessionState.Failed;
+        session.Completed ??= DateTimeOffset.Now;
+        store.NotifyUpdated(session);
     }
 
     private static Uri? BuildTunnelUrl(HttpRequestData request, string connectHost, int connectPort)

@@ -34,7 +34,12 @@
     "bytes": "{{value}} B",
     "kilobytes": "{{value, N1}} KB",
     "megabytes": "{{value, N2}} MB",
-    "noBytes": "-"
+    "noBytes": "-",
+    "progressBytes": "{{received}}/{{total}} B",
+    "progressKilobytes": "{{received, N1}}/{{total, N1}} KB",
+    "progressMegabytes": "{{received, N1}}/{{total, N1}} MB",
+    "progressGigabytes": "{{received, N2}}/{{total, N2}} GB",
+    "ofTotal": "{{received}} of {{total}} ({{fraction, P0}})"
   },
 
   "tabs": {
@@ -321,6 +326,7 @@
     "unknownProcess": "-",
     "pendingDuration": "...",
     "duration": "{{milliseconds, N0}} ms",
+    "receivingResult": "↓ {{status}}",
 
     "resend": "&Resend request",
     "sendToComposer": "Send to &Composer",
@@ -385,6 +391,7 @@
     "responseFailed": "Response   FAILED - {{error}}{{hint}}",
     "responseTunnel": "Response   (encrypted tunnel - not decrypted)",
     "responseWaiting": "Response   (waiting)",
+    "responseReceiving": "Response   {{startLine}}   (receiving {{progress}})",
 
     "timingStarted": "{{time, HH:mm:ss.fff}}",
     "timingTotal": "   total $t(sessionList.duration)",

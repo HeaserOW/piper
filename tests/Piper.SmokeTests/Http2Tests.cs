@@ -247,6 +247,16 @@ internal static class Http2Tests
                 runner.IsTrue(!released, $"{what}: the first part arrives while the origin is still gated");
                 runner.IsTrue(first.AsSpan().SequenceEqual(got), $"{what}: byte-exact");
 
+                // The session the client leg was served through, while its body is still arriving.
+                var session = store.Snapshot().Last(s => s.Path == "/drip");
+                runner.IsTrue(await Poll.UntilAsync(() => session.BytesReceived >= first.Length),
+                    $"{what}: the bytes relayed so far are counted ({session.BytesReceived})");
+                runner.AreEqual(SessionState.ReceivingBody, session.State, $"{what}: the session is receiving its body");
+                runner.AreEqual(withLength ? (long)(first.Length + second.Length) : -1L, session.ExpectedResponseBytes,
+                    $"{what}: expecting the length the origin gave");
+                runner.IsTrue(withLength ? session.ResponseProgress is > 0 and < 1 : session.ResponseProgress is null,
+                    $"{what}: with progress only when the length is known ({session.ResponseProgress})");
+
                 released = true;
                 gate.SetResult();
 
@@ -254,6 +264,9 @@ internal static class Http2Tests
                 await body.ReadExactlyAsync(rest).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
                 runner.IsTrue(second.AsSpan().SequenceEqual(rest), $"{what}: the rest follows");
                 runner.AreEqual(-1, body.ReadByte(), $"{what}: and the body ends there");
+                runner.IsTrue(await Poll.UntilAsync(() => session.State == SessionState.Complete),
+                    $"{what}: and the session completes ({session.State})");
+                runner.AreEqual((long)(first.Length + second.Length), session.ResponseSize, $"{what}: at the whole size");
             }
         });
 

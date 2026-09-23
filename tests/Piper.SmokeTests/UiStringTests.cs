@@ -73,6 +73,27 @@ internal static partial class UiStringTests
             "$t() carries the borrowed entry's format specifier through");
         runner.AreEqual("piper.no.such.key", I18n.T("piper.no.such.key"), "a missing key falls back to itself");
 
+        // A body still arriving. Built from the same culture the catalogue formats with, so this
+        // checks the shape and the rounding rather than one locale's separators.
+        static string N(double value, string format) => value.ToString(format, System.Globalization.CultureInfo.CurrentCulture);
+        runner.AreEqual($"{N(3.0, "N1")}/{N(8.0, "N1")} MB", Piper.App.Controls.Format.SizeProgress(3 * 1024 * 1024 + 1, 8L * 1024 * 1024),
+            "progress is shown in the unit of the total");
+        runner.AreEqual($"{N(7.9, "N1")}/{N(8.0, "N1")} MB", Piper.App.Controls.Format.SizeProgress(8L * 1024 * 1024 - 1, 8L * 1024 * 1024),
+            "an unfinished body never rounds up to its total");
+        runner.AreEqual("512/900 B", Piper.App.Controls.Format.SizeProgress(512, 900), "a small total stays in bytes");
+        runner.AreEqual($"{N(1.5, "N2")}/{N(2.0, "N2")} GB", Piper.App.Controls.Format.SizeProgress(1536L * 1024 * 1024, 2048L * 1024 * 1024),
+            "a large one moves to gigabytes");
+        runner.AreEqual($"{Strings.Units.Megabytes(3)} of {Strings.Units.Megabytes(8)} ({N(0.37, "P0")})",
+            Piper.App.Controls.Format.ProgressDetail(3L * 1024 * 1024, 8L * 1024 * 1024),
+            "the long form carries both figures and the share");
+        runner.AreEqual($"{Strings.Units.Bytes(0)} of {Strings.Units.Megabytes(8)} ({N(0, "P0")})",
+            Piper.App.Controls.Format.ProgressDetail(0, 8L * 1024 * 1024), "and starts from nothing");
+        runner.AreEqual($"{Strings.Units.Bytes(999)} of {Strings.Units.Bytes(1000)} ({N(0.99, "P0")})",
+            Piper.App.Controls.Format.ProgressDetail(999, 1000), "the share never rounds up to finished");
+        runner.AreEqual(Strings.Units.Kilobytes(2), Piper.App.Controls.Format.ProgressDetail(2048, -1),
+            "with no total it is just what has arrived");
+        runner.AreEqual("↓ 200", Strings.SessionList.ReceivingResult("200"), "the Result column marks a body still arriving");
+
         return Task.CompletedTask;
     });
 
