@@ -93,6 +93,35 @@ internal static class Http2StreamingTests
             runner.IsTrue(served is not null && served.WindowStalls > 0,
                 $"the sender ran out of window and resumed ({served?.WindowStalls} stalls)");
         });
+
+        await runner.RunAsync("a relay that fails part-way resets the stream instead of ending it", async () =>
+        {
+            // The head is already out, so only RST_STREAM can still say the body is incomplete. An
+            // END_STREAM here would hand the client a short download that looks like a finished one.
+            await using var harness = await Harness.StartAsync((_, _) =>
+            {
+                var head = new HttpResponseData { StatusCode = 200 };
+                return Task.FromResult(new Http2StreamResponse(head, async (destination, ct) =>
+                {
+                    await destination.WriteAsync("partial"u8.ToArray(), ct);
+                    await destination.FlushAsync(ct);
+                    throw new IOException("origin went away");
+                }));
+            });
+
+            using var client = harness.CreateClient();
+
+            string outcome;
+            try
+            {
+                var got = await client.GetByteArrayAsync($"{harness.BaseUrl}/cut");
+                outcome = $"completed with {got.Length} bytes";
+            }
+            catch (HttpRequestException) { outcome = "failed"; }
+            catch (IOException) { outcome = "failed"; }
+
+            runner.AreEqual("failed", outcome, "the client sees the transfer fail");
+        });
     }
 
     private sealed class Harness : IAsyncDisposable

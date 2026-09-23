@@ -12,7 +12,8 @@ namespace Piper.Core.Http2;
 /// <param name="Head">Status and headers. Carries the body too when <paramref name="RelayBody"/> is null.</param>
 /// <param name="RelayBody">
 /// Writes the body into the stream it is given, which turns those writes into flow-controlled DATA
-/// frames. Null when the body is already in <paramref name="Head"/>.
+/// frames. Null when the body is already in <paramref name="Head"/>. Throwing resets the stream
+/// rather than ending it, so a body that failed part-way is not reported as complete.
 /// </param>
 public sealed record Http2StreamResponse(HttpResponseData Head, Func<Stream, CancellationToken, Task>? RelayBody = null)
 {
@@ -410,7 +411,17 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
         if (response.RelayBody is { } relay)
         {
             var data = new Http2DataStream(this, http2Stream, ct);
-            await relay(data, ct).ConfigureAwait(false);
+            try
+            {
+                await relay(data, ct).ConfigureAwait(false);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // The relay failed after the head went out. Resetting the stream is the only way
+                // left to tell the client the body is incomplete.
+                EnqueueRstStream(streamId, Http2ErrorCode.InternalError);
+                return;
+            }
 
             // An empty DATA frame carries the END_STREAM the relayed bytes could not: nothing along
             // the way knew which write would turn out to be the last one.

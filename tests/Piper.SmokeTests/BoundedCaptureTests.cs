@@ -101,6 +101,60 @@ internal static class BoundedCaptureTests
             return Task.CompletedTask;
         });
 
+        await runner.RunAsync("the budget counts a body attached after the session was admitted", () =>
+        {
+            // The order the proxy actually uses: the session is added while the request is still in
+            // flight, and the response body only exists once it has been relayed.
+            var store = new SessionStore { RetainedBodyBudgetBytes = 200_000 };
+            var sessions = new List<Session>();
+
+            for (var i = 0; i < 40; i++)
+            {
+                var session = new Session { Request = new HttpRequestData { RequestTarget = $"/late-{i}" } };
+                store.Add(session);
+                sessions.Add(session);
+
+                session.Response = new HttpResponseData { Body = new byte[20_000], BodyTotalLength = 20_000 };
+                session.State = SessionState.Complete;
+                session.Completed = DateTimeOffset.Now;
+                store.NotifyUpdated(session);
+            }
+
+            runner.IsTrue(sessions.Sum(s => s.Response!.Body.LongLength) <= 200_000,
+                $"bodies attached later stay within the budget (held {sessions.Sum(s => s.Response!.Body.LongLength)})");
+            runner.AreEqual(0, sessions[0].Response!.Body.Length, "the oldest body is the one released");
+            return Task.CompletedTask;
+        });
+
+        await runner.RunAsync("sessions leaving the store stop counting against the budget", () =>
+        {
+            // Without this the total only ever grows, and bodies well within budget get released.
+            foreach (var (name, evict) in new (string, Action<SessionStore>)[]
+                     {
+                         ("removed", store => store.RemoveAll(s => s.Url.Contains("/old-", StringComparison.Ordinal))),
+                         ("trimmed by capacity", store => store.Capacity = 5),
+                     })
+            {
+                var store = new SessionStore { RetainedBodyBudgetBytes = 200_000 };
+                void AddBody(string path) => store.Add(new Session
+                {
+                    Request = new HttpRequestData { RequestTarget = path },
+                    Response = new HttpResponseData { Body = new byte[20_000], BodyTotalLength = 20_000 },
+                    State = SessionState.Complete,
+                    Completed = DateTimeOffset.Now,
+                });
+
+                for (var i = 0; i < 10; i++) AddBody($"/old-{i}");   // exactly the budget
+                evict(store);
+                for (var i = 0; i < 5; i++) AddBody($"/new-{i}");
+
+                var kept = store.Snapshot().Where(s => s.Url.Contains("/new-", StringComparison.Ordinal)).ToArray();
+                runner.IsTrue(kept.Length == 5 && kept.All(s => s.Response!.Body.Length == 20_000),
+                    $"after sessions are {name}, new bodies within budget are kept");
+            }
+            return Task.CompletedTask;
+        });
+
         await runner.RunAsync("an exported archive does not pass a fragment off as a whole body", () =>
         {
             var partial = new HttpResponseData { Body = Encoding.Latin1.GetBytes("first-half") };

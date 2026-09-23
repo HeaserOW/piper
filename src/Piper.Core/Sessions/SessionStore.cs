@@ -20,6 +20,10 @@ public sealed class SessionStore
     private int _firstSession;
     private long _retainedBodyBytes;
 
+    // What each retained session was last counted at. A proxied session is admitted before its
+    // response exists, so its body has to be counted again whenever it is updated.
+    private readonly Dictionary<Session, long> _countedBodyBytes = new(ReferenceEqualityComparer.Instance);
+
     /// <summary>Oldest sessions are dropped once the cap is hit. 0 disables trimming.</summary>
     public int Capacity { get; set; } = 20_000;
 
@@ -99,13 +103,17 @@ public sealed class SessionStore
                     // reached. Clear discarded references immediately, then compact the prefix in
                     // one amortized operation after enough additions have accumulated.
                     var discardEnd = _firstSession + discardCount;
-                    for (var i = _firstSession; i < discardEnd; i++) _sessions[i] = null!;
+                    for (var i = _firstSession; i < discardEnd; i++)
+                    {
+                        Uncount(_sessions[i]);
+                        _sessions[i] = null!;
+                    }
                     _firstSession = discardEnd;
                     CompactDiscardedPrefixIfNeeded();
                 }
             }
 
-            _retainedBodyBytes += BodyBytesOf(session);
+            Recount(session);
             ReleaseOldestBodiesIfOverBudget();
         }
         SessionAdded?.Invoke(this, new SessionEventArgs(session));
@@ -121,6 +129,11 @@ public sealed class SessionStore
             {
                 _pendingAdmission.Remove(session);
                 wasDeferred = true;
+            }
+            else if (_countedBodyBytes.ContainsKey(session))
+            {
+                Recount(session);
+                ReleaseOldestBodiesIfOverBudget();
             }
         }
 
@@ -175,6 +188,7 @@ public sealed class SessionStore
             _sessions.Clear();
             _firstSession = 0;
             _retainedBodyBytes = 0;
+            _countedBodyBytes.Clear();
             _pendingAdmission.Clear();
         }
         Cleared?.Invoke(this, EventArgs.Empty);
@@ -185,7 +199,12 @@ public sealed class SessionStore
         lock (_gate)
         {
             CompactDiscardedPrefix();
-            _sessions.RemoveAll(s => predicate(s));
+            _sessions.RemoveAll(s =>
+            {
+                if (!predicate(s)) return false;
+                Uncount(s);
+                return true;
+            });
         }
         Cleared?.Invoke(this, EventArgs.Empty);
     }
@@ -205,14 +224,25 @@ public sealed class SessionStore
         for (var i = _firstSession; i < _sessions.Count && _retainedBodyBytes > RetainedBodyBudgetBytes; i++)
         {
             var older = _sessions[i];
-            var freed = BodyBytesOf(older);
-            if (freed == 0) continue;
+            if (_countedBodyBytes.GetValueOrDefault(older) == 0) continue;
 
             if (older.Request is { } request) request.ReleaseBody();
             if (older.Response is { } response) response.ReleaseBody();
             older.InvalidateSearchIndex();
-            _retainedBodyBytes -= freed;
+            Recount(older);
         }
+    }
+
+    private void Recount(Session session)
+    {
+        var now = BodyBytesOf(session);
+        _retainedBodyBytes += now - _countedBodyBytes.GetValueOrDefault(session);
+        _countedBodyBytes[session] = now;
+    }
+
+    private void Uncount(Session session)
+    {
+        if (_countedBodyBytes.Remove(session, out var counted)) _retainedBodyBytes -= counted;
     }
 
     private static long BodyBytesOf(Session session) =>

@@ -62,20 +62,29 @@ internal static class ResponseFramingTests
             // where the body stops -- which is request smuggling, not a cosmetic difference.
             // Optional whitespace around a field value is stripped when the header block is parsed
             // (RFC 9110 5.5), so " 5" is genuinely the length 5 and is not listed here.
-            foreach (var bad in new[] { "+5", "0x5", "abc", "5.0", "-5", "" })
+            // A response is refused outright (RFC 9112 6.3 rule 5) rather than read until close: a
+            // relayed response carries its headers on, so the client would be handed the very
+            // length Piper had decided not to believe.
+            foreach (var bad in new[] { "+5", "0x5", "abc", "5.0", "-5", "", "5, 5" })
             {
-                runner.AreEqual(HttpBodyFraming.UntilClose,
-                    Describe($"Content-Length: {bad}", "GET", 200).Framing,
-                    $"a response with Content-Length '{bad}' is not length-framed");
+                runner.IsTrue(Rejects($"Content-Length: {bad}"),
+                    $"a response with Content-Length '{bad}' is rejected");
                 runner.AreEqual(HttpBodyFraming.None,
                     HttpParser.DescribeRequestBody(HeaderCollection.Parse($"Content-Length: {bad}")).Framing,
                     $"a request with Content-Length '{bad}' carries no body");
             }
 
             // A value too large for Int64 is likewise not a length.
-            runner.AreEqual(HttpBodyFraming.UntilClose,
-                Describe("Content-Length: 99999999999999999999999", "GET", 200).Framing,
-                "an overflowing Content-Length is not length-framed");
+            runner.IsTrue(Rejects("Content-Length: 99999999999999999999999"),
+                "an overflowing Content-Length is rejected");
+
+            // Two copies are one length only when they agree; otherwise each hop may pick a
+            // different one.
+            runner.IsTrue(Rejects("Content-Length: 5\r\nContent-Length: 7"), "conflicting copies are rejected");
+            runner.AreEqual(HttpBodyDescriptor.OfLength(5),
+                Describe("Content-Length: 5\r\nContent-Length: 5", "GET", 200), "identical copies are one length");
+            runner.AreEqual(HttpBodyFraming.None,
+                Describe("Content-Length: abc", "HEAD", 200).Framing, "and a bodiless response is never judged on it");
 
             return Task.CompletedTask;
         });
@@ -182,12 +191,28 @@ internal static class ResponseFramingTests
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFFFFFFFF\r\n", "a chunk size that overflows"),
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", "a chunk shorter than its declared size"),
                 ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", "a chunked body with no terminating chunk"),
+                ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhelloXY\r\n0\r\n\r\n", "a chunk running on past its size"),
+                ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\r\n\r\n5\r\nhello\r\n0\r\n\r\n", "blank lines where a chunk size belongs"),
+                ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!", "conflicting Content-Length headers"),
                 ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n", "a header block that never ends"),
                 ("", "a connection that closes before the status line"),
             };
 
             foreach (var (wire, what) in rejected)
                 runner.IsTrue(await ThrowsParseAsync(() => ReadResponseAsync(wire, "GET")), $"{what} is rejected");
+
+            // The relay parses chunks itself, so it has to refuse the same malformed framing rather
+            // than pass it on.
+            foreach (var (wire, what) in rejected.Where(r => r.Item1.Contains("chunked", StringComparison.Ordinal)))
+            {
+                var body = wire[(wire.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)..];
+                runner.IsTrue(await ThrowsParseAsync(async () =>
+                {
+                    using var reader = ReaderFor(body);
+                    await HttpBodyRelay.RelayAsync(reader, HttpBodyDescriptor.Chunked, Stream.Null,
+                        rechunkDownstream: true, captureLimit: long.MaxValue, CancellationToken.None);
+                }), $"{what} is rejected by the relay too");
+            }
 
             // Attacker-controlled counts and lengths stay bounded (CLAUDE.md), so a peer cannot make
             // the parser allocate without limit before it decides the message is malformed.
@@ -221,6 +246,19 @@ internal static class ResponseFramingTests
 
     private static HttpBodyDescriptor Describe(string headerBlock, string method, int status) =>
         HttpParser.DescribeResponseBody(HeaderCollection.Parse(headerBlock), method, status);
+
+    private static bool Rejects(string headerBlock)
+    {
+        try
+        {
+            Describe(headerBlock, "GET", 200);
+            return false;
+        }
+        catch (HttpParseException)
+        {
+            return true;
+        }
+    }
 
     private static HttpStreamReader ReaderFor(string wire) =>
         new(new MemoryStream(Encoding.Latin1.GetBytes(wire)));

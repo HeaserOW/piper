@@ -148,7 +148,6 @@ public static class HttpBodyRelay
 
             var semi = sizeLine.IndexOf(';');
             var sizeText = (semi >= 0 ? sizeLine[..semi] : sizeLine).Trim();
-            if (sizeText.Length == 0) continue;
 
             if (!int.TryParse(sizeText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var chunkSize)
                 || chunkSize < 0)
@@ -181,8 +180,10 @@ public static class HttpBodyRelay
                 remaining -= read;
             }
 
-            // Each chunk is followed by its own CRLF.
-            await source.ReadLineAsync(ct).ConfigureAwait(false);
+            // Each chunk is followed by its own CRLF, and by nothing else: a chunk that runs on
+            // past its declared size means the two ends disagree about where it stops.
+            if (await source.ReadLineAsync(ct).ConfigureAwait(false) is not "")
+                throw new HttpParseException("Chunk not terminated by CRLF.");
         }
     }
 

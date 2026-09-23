@@ -117,9 +117,16 @@ public static class HttpParser
 
         if (headers.HasToken("Transfer-Encoding", "chunked")) return HttpBodyDescriptor.Chunked;
 
-        if (TryReadContentLength(headers, out var length)) return HttpBodyDescriptor.OfLength(length);
+        if (!headers.Contains("Content-Length")) return HttpBodyDescriptor.UntilClose;
 
-        return HttpBodyDescriptor.UntilClose;
+        // RFC 9112 6.3 rule 5: a length that is unreadable, or that differs between two copies of
+        // the header, is an error rather than a response to be read until close. Falling back would
+        // relay the header Piper had just distrusted to a client that may well frame on it.
+        if (headers.GetValues("Content-Length").Distinct(StringComparer.Ordinal).Count() == 1
+            && TryReadContentLength(headers, out var length))
+            return HttpBodyDescriptor.OfLength(length);
+
+        throw new HttpParseException("Response has an invalid or conflicting Content-Length.");
     }
 
     /// <summary>
@@ -223,7 +230,6 @@ public static class HttpParser
             // Strip any chunk extensions after ';'.
             var semi = sizeLine.IndexOf(';');
             var sizeText = (semi >= 0 ? sizeLine[..semi] : sizeLine).Trim();
-            if (sizeText.Length == 0) continue;
 
             if (!int.TryParse(sizeText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var chunkSize))
                 throw new HttpParseException($"Bad chunk size: '{Truncate(sizeText)}'");
@@ -245,8 +251,10 @@ public static class HttpParser
             var chunk = await reader.ReadExactlyAsync(chunkSize, ct).ConfigureAwait(false);
             body.Write(chunk, 0, chunk.Length);
 
-            // Each chunk is followed by its own CRLF.
-            await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            // Each chunk is followed by its own CRLF, and by nothing else: a chunk that runs on
+            // past its declared size means the two ends disagree about where it stops.
+            if (await reader.ReadLineAsync(ct).ConfigureAwait(false) is not "")
+                throw new HttpParseException("Chunk not terminated by CRLF.");
         }
     }
 

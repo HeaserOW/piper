@@ -107,12 +107,17 @@ internal static class StreamingResponseTests
             // here: what is asserted is that the declared size alone no longer decides the outcome.
             const long Declared = 5_000_000_000;
             var sent = new string('z', 64 * 1024);
+            var clientHasIt = new TaskCompletionSource();
 
             await using var origin = new TestRawOrigin(async (_, stream, ct) =>
             {
                 await TestRawOrigin.WriteAsync(stream,
                     $"HTTP/1.1 200 OK\r\nContent-Length: {Declared}\r\n\r\n{sent}", ct);
-                return false;   // then closes, far short of what it promised
+                // Then closes, far short of what it promised -- but only once the client has read
+                // what did arrive. Ending short resets the client's connection, and a reset may
+                // discard bytes the client has not read yet.
+                await clientHasIt.Task.WaitAsync(TimeSpan.FromSeconds(15), ct);
+                return false;
             });
 
             using var harness = new ProxyHarness();
@@ -129,6 +134,7 @@ internal static class StreamingResponseTests
             await using var body = await response.Content.ReadAsStreamAsync();
             var got = new byte[sent.Length];
             await ReadExactlyAsync(body, got);
+            clientHasIt.SetResult();
             runner.AreEqual(sent, Encoding.Latin1.GetString(got), "and the bytes it did send arrive");
         });
 
@@ -223,35 +229,7 @@ internal static class StreamingResponseTests
                 });
 
                 using var harness = new ProxyHarness();
-                using var socket = new TcpClient();
-                await socket.ConnectAsync(IPAddress.Loopback, harness.Port);
-                var proxy = socket.GetStream();
-                var url = $"http://127.0.0.1:{origin.Port}/cut";
-                await proxy.WriteAsync(Encoding.Latin1.GetBytes(
-                    $"GET {url} HTTP/1.1\r\nHost: 127.0.0.1:{origin.Port}\r\n\r\n"));
-
-                using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                var received = new List<byte>();
-                var buffer = new byte[4096];
-                var reset = false;
-                try
-                {
-                    while (true)
-                    {
-                        var n = await proxy.ReadAsync(buffer, budget.Token);
-                        if (n == 0) break;
-                        received.AddRange(buffer.AsSpan(0, n));
-                        if (!headSeen.Task.IsCompleted
-                            && Encoding.Latin1.GetString(received.ToArray()).Contains("\r\n\r\n"))
-                            headSeen.SetResult();
-                    }
-                }
-                catch (IOException)
-                {
-                    reset = true;
-                }
-
-                var text = Encoding.Latin1.GetString(received.ToArray());
+                var (text, reset) = await RawExchangeAsync(harness, origin, "/cut", "HTTP/1.1", headSeen);
                 runner.IsTrue(text.StartsWith("HTTP/1.1 200 OK\r\n", StringComparison.Ordinal),
                     "the origin's head reached the client");
                 var tail = text[(text.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)..];
@@ -261,6 +239,150 @@ internal static class StreamingResponseTests
                 runner.AreEqual(SessionState.Failed, LastSessionFor(harness, "/cut").State,
                     "the session is recorded as failed");
             });
+        }
+
+        await runner.RunAsync("a Content-Length beside chunked is not relayed alongside it", async () =>
+        {
+            // Chunked wins at Piper (RFC 9112 6.3), so the length describes nothing that is relayed,
+            // and a next hop that framed on it instead would desync.
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 999\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            var (text, _) = await RawExchangeAsync(harness, origin, "/both", "HTTP/1.1");
+            var head = text[..(text.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)];
+
+            runner.IsTrue(!head.Contains("Content-Length", StringComparison.OrdinalIgnoreCase),
+                $"the length is dropped ({head.ReplaceLineEndings("|")})");
+            runner.IsTrue(head.Contains("Transfer-Encoding: chunked", StringComparison.Ordinal), "and the body stays chunked");
+            runner.AreEqual("5\r\nhello\r\n0\r\n\r\n", text[head.Length..], "carrying exactly the relayed bytes");
+        });
+
+        await runner.RunAsync("a response with an unreadable Content-Length is refused, not relayed", async () =>
+        {
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream, "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello", ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            using var client = harness.CreateClient();
+            var response = await client.GetAsync($"http://127.0.0.1:{origin.Port}/signed");
+
+            runner.AreEqual(HttpStatusCode.BadGateway, response.StatusCode,
+                "the client gets a 502 before any of it is relayed");
+            runner.AreEqual(SessionState.Failed, LastSessionFor(harness, "/signed").State, "and the session says so");
+        });
+
+        await runner.RunAsync("an HTTP/1.0 client is given a chunked body de-chunked", async () =>
+        {
+            // HTTP/1.0 has no chunked coding: such a client would take the chunk-size lines for
+            // content. It gets the body delimited by the connection closing instead.
+            await using var origin = new TestRawOrigin(async (_, stream, ct) =>
+            {
+                await TestRawOrigin.WriteAsync(stream,
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n", ct);
+                return false;
+            });
+
+            using var harness = new ProxyHarness();
+            var (text, _) = await RawExchangeAsync(harness, origin, "/old", "HTTP/1.0");
+            var head = text[..(text.IndexOf("\r\n\r\n", StringComparison.Ordinal) + 4)];
+
+            runner.IsTrue(!head.Contains("Transfer-Encoding", StringComparison.OrdinalIgnoreCase),
+                $"no chunked coding is announced ({head.ReplaceLineEndings("|")})");
+            runner.IsTrue(head.Contains("Connection: close", StringComparison.Ordinal), "the close delimits the body");
+            runner.AreEqual("hello world", text[head.Length..], "which arrives de-chunked");
+        });
+
+        await runner.RunAsync("a relay toward a leg that cannot half-close ends when either side does", async () =>
+        {
+            // A TLS leg is passed with no socket, because half-closing TCP under TLS would look like
+            // a truncation attack. Without a half-close to pass on, one side finishing must end the
+            // pair, or the peer waits on the other direction for ever.
+            using var clientPair = await SocketPair.CreateAsync();
+            using var originPair = await SocketPair.CreateAsync();
+
+            var relay = ProxyServer.RelayBothWaysAsync(
+                clientPair.Far, null, originPair.Near, null, CancellationToken.None);
+
+            originPair.Far.Dispose();   // the origin ends; the client never sends another byte
+
+            var finished = await Task.WhenAny(relay, Task.Delay(TimeSpan.FromSeconds(10))) == relay;
+            runner.IsTrue(finished, "the relay ends instead of waiting on the silent direction");
+        });
+    }
+
+    /// <summary>
+    /// Sends one GET through the proxy on a raw socket and reads until the proxy ends the
+    /// connection, reporting whether it ended with a reset rather than an orderly close.
+    /// </summary>
+    private static async Task<(string Text, bool Reset)> RawExchangeAsync(
+        ProxyHarness harness, TestRawOrigin origin, string path, string version,
+        TaskCompletionSource? headSeen = null)
+    {
+        using var socket = new TcpClient();
+        await socket.ConnectAsync(IPAddress.Loopback, harness.Port);
+        var proxy = socket.GetStream();
+        await proxy.WriteAsync(Encoding.Latin1.GetBytes(
+            $"GET http://127.0.0.1:{origin.Port}{path} {version}\r\nHost: 127.0.0.1:{origin.Port}\r\nConnection: close\r\n\r\n"));
+
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var received = new List<byte>();
+        var buffer = new byte[4096];
+        try
+        {
+            while (true)
+            {
+                var n = await proxy.ReadAsync(buffer, budget.Token);
+                if (n == 0) return (Encoding.Latin1.GetString(received.ToArray()), false);
+                received.AddRange(buffer.AsSpan(0, n));
+                if (headSeen is { Task.IsCompleted: false }
+                    && Encoding.Latin1.GetString(received.ToArray()).Contains("\r\n\r\n"))
+                    headSeen.SetResult();
+            }
+        }
+        catch (IOException)
+        {
+            return (Encoding.Latin1.GetString(received.ToArray()), true);
+        }
+    }
+
+    /// <summary>Both ends of one loopback TCP connection, as streams.</summary>
+    private sealed class SocketPair : IDisposable
+    {
+        private SocketPair(NetworkStream near, NetworkStream far) => (Near, Far) = (near, far);
+
+        public NetworkStream Near { get; }
+
+        public NetworkStream Far { get; }
+
+        public static async Task<SocketPair> CreateAsync()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            try
+            {
+                var near = new TcpClient();
+                await near.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+                var far = await listener.AcceptTcpClientAsync();
+                return new SocketPair(near.GetStream(), far.GetStream());
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
+
+        public void Dispose()
+        {
+            Near.Dispose();
+            Far.Dispose();
         }
     }
 

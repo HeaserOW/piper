@@ -319,6 +319,14 @@ whole message first. What the origin used to frame the body is what Piper sends:
 is passed through unchanged, a chunked body stays chunked. Nothing is re-framed, because a client
 that draws a progress bar from `Content-Length` has nothing to draw with if the length is dropped.
 
+The exceptions are the cases where passing the framing on would be wrong. A `Content-Length` sent
+beside chunked coding is dropped, since chunked wins and the length describes nothing that is
+relayed. An HTTP/1.0 client, which has no chunked coding, gets a chunked body de-chunked and ended by
+the connection closing. A response whose `Content-Length` is unreadable or contradicts itself is
+refused with a 502 rather than relayed. If the origin fails once the body has started, the client's
+connection is reset (an HTTP/2 stream gets `RST_STREAM`), so a cut-off download is never mistaken
+for a finished one.
+
 Both legs do this. An HTTP/1.1 response is relayed onward as it is read; an HTTP/2 response is
 framed into DATA frames as the bytes arrive, and a sender that exhausts the peer flow-control
 window resumes on the WINDOW_UPDATE that grants more rather than on the next tick of a timer.

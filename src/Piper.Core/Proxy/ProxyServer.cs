@@ -350,11 +350,18 @@ public sealed class ProxyServer : IAsyncDisposable
     /// the transfer the connection existed for, mid-body. Each direction instead passes its close
     /// on, so the peer learns no more data is coming and can finish its own half in its own time.
     /// </remarks>
-    private static async Task RelayBothWaysAsync(
+    internal static async Task RelayBothWaysAsync(
         Stream first, Socket? firstSocket, Stream second, Socket? secondSocket, CancellationToken ct)
     {
-        var forward = PumpAsync(first, second, secondSocket, ct);
-        var backward = PumpAsync(second, first, firstSocket, ct);
+        using var both = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var forward = PumpAsync(first, second, secondSocket, both.Token);
+        var backward = PumpAsync(second, first, firstSocket, both.Token);
+
+        // A direction ending toward a leg that cannot be half-closed (a TLS one) has no way to tell
+        // that peer, which would then hold the other direction open for ever. End both instead.
+        var ended = await Task.WhenAny(forward, backward).ConfigureAwait(false);
+        if ((ended == forward ? secondSocket : firstSocket) is null) await both.CancelAsync().ConfigureAwait(false);
+
         await Task.WhenAll(forward, backward).ConfigureAwait(false);
     }
 
@@ -606,9 +613,16 @@ public sealed class ProxyServer : IAsyncDisposable
             var closeAfterBody = !upstreamResponse.IsBuffered
                                  && upstreamResponse.Body.Framing == HttpBodyFraming.UntilClose;
 
+            // HTTP/1.0 has no chunked coding (RFC 9112 7.1), so a chunked body goes to such a client
+            // de-chunked and delimited by the close instead.
+            var dechunkForClient = !upstreamResponse.IsBuffered
+                                   && upstreamResponse.Body.Framing == HttpBodyFraming.Chunked
+                                   && request.HttpVersion == "HTTP/1.0";
+            var clientCloseAfterBody = closeAfterBody || dechunkForClient;
+
             var inbound = BuildInboundResponse(
                 response, upstreamResponse.IsBuffered && canHaveBody,
-                clientWantsClose || closeAfterBody);
+                clientWantsClose || clientCloseAfterBody);
 
             // This clone's HttpVersion is only ever used for the literal wire bytes about to go
             // out on *this* h1.1 connection -- it must say "HTTP/1.1" no matter what the upstream
@@ -624,7 +638,13 @@ public sealed class ProxyServer : IAsyncDisposable
                 // no buffered body left to recompute it from -- and because a client that reports
                 // progress from Content-Length shows a frozen bar for the whole transfer if the
                 // length is dropped, which looks exactly like the hang being fixed here.
-                rechunk = upstreamResponse.Body.Framing == HttpBodyFraming.Chunked;
+                // A Content-Length is only the framing when nothing overrides it. Beside chunked it
+                // does not describe the bytes relayed, and the next hop may frame on either one, so
+                // RFC 9112 6.1 has a proxy drop it.
+                if (upstreamResponse.Body.Framing is HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose)
+                    inbound.Headers.Remove("Content-Length");
+
+                rechunk = upstreamResponse.Body.Framing == HttpBodyFraming.Chunked && !dechunkForClient;
                 if (rechunk) inbound.Headers.Set("Transfer-Encoding", "chunked");
             }
 
@@ -657,7 +677,7 @@ public sealed class ProxyServer : IAsyncDisposable
 
             if (serverWantsClose || closeAfterBody) slot.Reset();
 
-            return !clientWantsClose && !serverWantsClose && !closeAfterBody;
+            return !clientWantsClose && !serverWantsClose && !clientCloseAfterBody;
         }
         catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException
                                        or HttpParseException or OperationCanceledException)

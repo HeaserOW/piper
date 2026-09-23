@@ -137,6 +137,11 @@ internal static class Http2RequestForwarder
             var inbound = ProxyServer.BuildInboundResponse(
                 response, framing is null && canHaveBody, clientWantsClose: true);
             inbound.Headers.Remove("Connection"); // downstream-wire plumbing; h2 has no such header at all
+
+            // Beside chunked, or on a body read until close, the origin's Content-Length does not
+            // describe the bytes about to be relayed, and an h2 client checks DATA against it.
+            if (framing is { Framing: HttpBodyFraming.Chunked or HttpBodyFraming.UntilClose })
+                inbound.Headers.Remove("Content-Length");
             session.Response = inbound;
             session.InvalidateSearchIndex();
 
@@ -170,10 +175,12 @@ internal static class Http2RequestForwarder
                 catch (Exception relayError) when (relayError is SocketException or IOException
                                                        or HttpParseException or OperationCanceledException)
                 {
-                    // The head is already with the client and cannot be taken back; the stream ends
-                    // short and the session says why rather than looking like a clean success.
+                    // The head is already with the client and cannot be taken back. Rethrown so the
+                    // stream is reset rather than ended: a clean END_STREAM would pass a short body
+                    // off as a complete one.
                     session.State = SessionState.Failed;
                     session.Error = ProxyServer.Describe(relayError);
+                    throw;
                 }
                 finally
                 {
