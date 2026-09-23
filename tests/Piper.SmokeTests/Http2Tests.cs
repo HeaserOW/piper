@@ -140,7 +140,7 @@ internal static class Http2Tests
             runner.AreEqual("cancelled", outcome, "the relay reports that it did not deliver");
             runner.AreEqual(SessionState.Failed, session.State, "the session is failed, not left awaiting a response");
             runner.IsTrue(session.Completed is not null, "and it is ended");
-            runner.IsTrue(session.Error?.Contains("never reached the client", StringComparison.Ordinal) == true,
+            runner.IsTrue(session.Error?.Contains("before the body was relayed", StringComparison.Ordinal) == true,
                 $"with the reason, not a bare cancellation (was: {session.Error})");
         });
 
