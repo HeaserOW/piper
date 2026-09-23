@@ -94,6 +94,75 @@ internal static partial class UiStringTests
             "with no total it is just what has arrived");
         runner.AreEqual("↓ 200", Strings.SessionList.ReceivingResult("200"), "the Result column marks a body still arriving");
 
+        // A total moves up a unit before it would print as 1,000 or more of the smaller one.
+        runner.AreEqual("999/999 B", Piper.App.Controls.Format.SizeProgress(999, 999), "999 bytes is the last total shown in bytes");
+        runner.AreEqual($"{N(0.9, "N1")}/{N(1000 / 1024.0, "N1")} KB", Piper.App.Controls.Format.SizeProgress(1000, 1000),
+            "1,000 bytes moves to kilobytes");
+        runner.AreEqual($"{N(0.9, "N1")}/{N(1.0, "N1")} MB", Piper.App.Controls.Format.SizeProgress(1_023_949, 1_023_949),
+            "a total that would round to 1,000.0 KB moves to megabytes");
+        runner.AreEqual($"{N(0.97, "N2")}/{N(0.98, "N2")} GB",
+            Piper.App.Controls.Format.SizeProgress(1_048_523_572, 1_048_523_572),
+            "a total that would round to 1,000.0 MB moves to gigabytes");
+
+        // The Size and Time columns are sized to their widest sample. The grid font is monospaced, so
+        // no text a cell can show may be longer than that sample, or the column would cut it off.
+        var widestSize = Piper.App.Controls.Format.WidestSizeTexts().Max(text => text.Length);
+        var longestSize = 0;
+        var longestSizeText = string.Empty;
+        foreach (var unit in new[] { 1L, 1L << 10, 1L << 20, 1L << 30 })
+        {
+            foreach (var scale in new[] { 0.5, 0.9, 0.999, 0.9765, 0.97655, 0.9999, 1.0, 999.0, 999.9, 999.94, 999.95, 999.99 })
+            {
+                var total = Math.Max(1, (long)(unit * scale));
+                foreach (var text in new[]
+                {
+                    Piper.App.Controls.Format.SizeProgress(0, total),
+                    Piper.App.Controls.Format.SizeProgress(total - 1, total),
+                    Piper.App.Controls.Format.SizeProgress(total, total),
+                    Piper.App.Controls.Format.Size(total),
+                })
+                {
+                    if (text.Length <= longestSize) continue;
+                    longestSize = text.Length;
+                    longestSizeText = text;
+                }
+            }
+        }
+        runner.IsTrue(longestSize <= widestSize,
+            $"no size up to 999.99 GB is wider than the Size column's sample (longest: \"{longestSizeText}\")");
+
+        var widestDuration = Piper.App.Controls.Format.WidestDurationTexts().Max(text => text.Length);
+        var longestDuration = new[] { 0, 9, 999, 1_000, 59_999, 999_999, 3_600_000, 9_999_999 }
+            .Max(ms => Strings.SessionList.Duration(ms).Length);
+        runner.IsTrue(longestDuration <= widestDuration, "no duration under 9,999,999 ms is wider than the Time column's sample");
+
+        var widestResult = Piper.App.Controls.Format.WidestResultTexts().Max(text => text.Length);
+        runner.IsTrue(Strings.SessionList.ReceivingResult("200").Length <= widestResult && "CONNECT".Length <= widestResult,
+            "the Result column's sample covers a tunnel and a body still arriving");
+
+        // A narrow Path drops its middle, not the file name at its end.
+        const string download = "/files/5120/338/All-the-Mods.zip";
+        runner.AreEqual(download, Piper.App.Controls.Format.ShortenPath(download, download.Length), "a path that fits is untouched");
+        runner.AreEqual("/fil.../All-the-Mods.zip", Piper.App.Controls.Format.ShortenPath(download, 24), "a long one keeps its file name");
+        runner.AreEqual("/a.../search?gameId=432&sort=a/b",
+            Piper.App.Controls.Format.ShortenPath("/api/v1/mods/search?gameId=432&sort=a/b", 32),
+            "the last segment is found before the query, whose values may hold a slash");
+        runner.AreEqual(download, Piper.App.Controls.Format.ShortenPath(download, 18),
+            "a file name that cannot fit with a head is left to the cell's end ellipsis");
+        runner.AreEqual("/a-single-long-segment", Piper.App.Controls.Format.ShortenPath("/a-single-long-segment", 8),
+            "a single segment has no middle to drop");
+        runner.AreEqual("no-slash-at-all", Piper.App.Controls.Format.ShortenPath("no-slash-at-all", 5), "nor does text with no slash");
+        runner.AreEqual(download, Piper.App.Controls.Format.ShortenPath(download, 0), "a zero width is left to the ellipsis");
+        runner.AreEqual(download, Piper.App.Controls.Format.ShortenPath(download, -4), "and so is a negative one");
+        runner.AreEqual(string.Empty, Piper.App.Controls.Format.ShortenPath(string.Empty, 3), "an empty path stays empty");
+        var neverWider = true;
+        for (var width = 0; width <= download.Length + 2; width++)
+        {
+            var shortened = Piper.App.Controls.Format.ShortenPath(download, width);
+            neverWider &= shortened == download || shortened.Length == width;
+        }
+        runner.IsTrue(neverWider, "a shortened path is exactly as wide as the cell allows");
+
         return Task.CompletedTask;
     });
 
