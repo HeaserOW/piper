@@ -13,7 +13,9 @@ namespace Piper.Core.Http2;
 /// <param name="RelayBody">
 /// Writes the body into the stream it is given, which turns those writes into flow-controlled DATA
 /// frames. Null when the body is already in <paramref name="Head"/>. Throwing resets the stream
-/// rather than ending it, so a body that failed part-way is not reported as complete.
+/// rather than ending it, so a body that failed part-way is not reported as complete. Always run
+/// once handed over -- with an already-cancelled token when the head could not be sent -- so it
+/// can release whatever it owns.
 /// </param>
 public sealed record Http2StreamResponse(HttpResponseData Head, Func<Stream, CancellationToken, Task>? RelayBody = null)
 {
@@ -417,9 +419,33 @@ public sealed class Http2Connection(Stream stream, Func<HttpRequestData, Cancell
     private async Task SendResponseAsync(Http2Stream http2Stream, Http2StreamResponse response, CancellationToken ct)
     {
         var head = response.Head;
-        var fields = Http2MessageAdapter.ToHeaderFields(head);
-        var block = HpackEncoder.Encode(fields); // stateless encoder: safe to call from any task
         var streamId = http2Stream.Id;
+
+        byte[] block;
+        try
+        {
+            block = HpackEncoder.Encode(Http2MessageAdapter.ToHeaderFields(head)); // stateless encoder: safe to call from any task
+        }
+        catch (Exception)
+        {
+            // Nothing has gone out, so the stream is reset rather than left waiting forever. A relay
+            // still runs, with nowhere to write and a token already cancelled: it owns wherever its
+            // body was coming from, and only it can let go of that.
+            EnqueueRstStream(streamId, Http2ErrorCode.InternalError);
+            if (response.RelayBody is { } unsent)
+            {
+                try
+                {
+                    await unsent(Stream.Null, new CancellationToken(canceled: true)).ConfigureAwait(false);
+                }
+                catch (Exception)
+                {
+                    // Expected: it was told to stop. The stream is already reset, so there is no one
+                    // left to report to.
+                }
+            }
+            return;
+        }
 
         // A relayed body has no length yet, so the headers must not claim there is no body.
         var hasBody = response.RelayBody is not null || head.Body.Length > 0;
