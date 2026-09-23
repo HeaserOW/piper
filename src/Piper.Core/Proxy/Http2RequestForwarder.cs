@@ -179,7 +179,8 @@ internal static class Http2RequestForwarder
                 {
                     // Already cancelled when the head never reached the client; a body that
                     // happened to be buffered whole must not then be recorded as delivered.
-                    relayCt.ThrowIfCancellationRequested();
+                    if (relayCt.IsCancellationRequested)
+                        throw new OperationCanceledException("The response never reached the client.", relayCt);
                     var relayed = await HttpBodyRelay.RelayAsync(
                         bodyReader!, body, destination,
                         rechunkDownstream: false, options.MaxCapturedBodyBytes, relayCt).ConfigureAwait(false);
