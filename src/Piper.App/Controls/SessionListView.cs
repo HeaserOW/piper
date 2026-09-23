@@ -568,6 +568,7 @@ public sealed class SessionListView : UserControl
         // this is "was the user already looking at the bottom", independent of how many new
         // rows are about to arrive.
         var wasAtBottom = IsScrolledToBottom();
+        var previousTop = _list.IsHandleCreated ? _list.TopItem?.Index ?? 0 : 0;
         _store.CopyTo(_visible);
         PruneMarks(_visible);
         ApplyVisibilityFiltersInPlace();
@@ -584,7 +585,8 @@ public sealed class SessionListView : UserControl
             // parked past the last row: the rows are there, but nothing paints until a click happens
             // to scroll it back into range. Pull it to the top first whenever the old offset can no
             // longer be meaningful, then let the rules below decide where to leave it.
-            if (_visible.Count > 0 && (_visible.Count < previousCount || previousCount == 0))
+            var offsetReset = _visible.Count > 0 && (_visible.Count < previousCount || previousCount == 0);
+            if (offsetReset)
                 _list.EnsureVisible(0);
 
             if (previousIds is { Count: > 0 })
@@ -593,10 +595,15 @@ public sealed class SessionListView : UserControl
                 for (var index = 0; index < _visible.Count; index++)
                     if (previousIds.Contains(_visible[index].Id)) _list.SelectedIndices.Add(index);
             }
-            else if (_autoScroll && wasAtBottom && _visible.Count > 0)
-            {
+
+            // Follow the tail whether or not a row is selected: selecting a session to inspect it
+            // must not freeze the list. Scrolling up is what pauses following, not selection.
+            if (_autoScroll && wasAtBottom && _visible.Count > 0)
                 _list.EnsureVisible(_visible.Count - 1);
-            }
+            // Otherwise the user has scrolled away from the tail: reselecting the rows above drags
+            // the view toward the selection, so put the first row they were reading back on top.
+            else if (!offsetReset && previousTop < _visible.Count && _list.TopItem?.Index != previousTop)
+                _list.TopItem = _list.Items[previousTop];
         }
         finally
         {
