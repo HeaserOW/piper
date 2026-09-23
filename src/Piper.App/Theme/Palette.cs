@@ -287,8 +287,9 @@ public static class Palette
     /// A docked single-line row has no auto-height in WinForms and there are about thirty-five of
     /// these constants, so the walk scales them rather than each being edited by hand. It
     /// deliberately leaves <see cref="SplitContainer.SplitterDistance"/>, the splitter minimum
-    /// sizes, and ListView column widths alone -- splitters are user-draggable and the columns
-    /// already expand to fit the view, so those absorb the change on their own. A dialog whose whole
+    /// sizes, and ListView column widths alone -- splitters are user-draggable, and the columns
+    /// expand to fit the view (the session list also re-measures its compact columns, which the form
+    /// asks it to after a zoom), so those absorb the change on their own. A dialog whose whole
     /// client size needs to grow does that at its own call site via <see cref="ScaleDialogSize"/>.
     /// </remarks>
     private static void ApplyRowHeight(Control control)
