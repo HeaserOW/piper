@@ -328,11 +328,25 @@ This matters in three ways:
   media never complete, so a proxy that waits for the end of the message waits for ever.
 - **Size is not a limit.** There is no ceiling on what can pass through.
 
-What *is* bounded is how much of a body is kept for inspection. Piper retains the start of a body
-and records the full length it saw, so the session grid and the inspector report what actually
-crossed the wire even when only part of it was kept. Bounding what is retained is what lets the
-relay be unconditional: a modpack install fetching hundreds of files would otherwise spend its time
-collecting garbage instead of proxying.
+What *is* bounded is how much of a body is kept for inspection, by two limits:
+
+| | |
+|---|---|
+| `MaxCapturedBodyBytes` | how much of a single body is retained (default 32 MB) |
+| `RetainedBodyBudgetBytes` | how many body bytes are kept across all sessions (default 512 MB) |
+
+Past the first, the rest of the body is relayed but not kept. Past the second, the oldest sessions
+give up their bodies -- the sessions themselves stay, with their URL, status, timings and size,
+because what a capture is mostly used for is seeing that a request happened at all. A session count
+is not a bound on memory: twenty thousand sessions is nothing if they are API calls and several
+gigabytes if they are downloads.
+
+Nothing reports a partly kept body as a small one. The grid and the inspector show the length that
+crossed the wire, the inspector says how much of it was retained, and a `.saz` export marks a
+partial body with `X-Piper-Body-Truncated` rather than writing the fragment as though it were the
+whole thing. Bounding what is retained is what lets the relay itself be unconditional: a modpack
+install fetching hundreds of files would otherwise spend its time collecting garbage instead of
+proxying.
 
 The trade this makes is that a body can no longer be edited on its way back to the client. Piper
 has never offered that -- the AutoResponder replaces responses rather than editing real ones -- so

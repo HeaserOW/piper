@@ -32,6 +32,16 @@ public abstract class HttpMessage
     /// <summary>True when <see cref="Body"/> is the whole body rather than a retained prefix.</summary>
     public bool IsBodyComplete => Body.LongLength >= BodyTotalLength;
 
+    /// <summary>
+    /// Drops the retained bytes while keeping the length they weighed, so a released body is
+    /// reported as the size it was rather than as an empty one.
+    /// </summary>
+    public void ReleaseBody()
+    {
+        _bodyTotalLength = BodyTotalLength;
+        Body = [];
+    }
+
     public string? ContentType => Headers["Content-Type"];
 
     public string? ContentEncoding => Headers["Content-Encoding"];

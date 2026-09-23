@@ -557,6 +557,7 @@ await ResponseFramingTests.RunAsync(runner);
 await FramingCorrectnessTests.RunAsync(runner);
 await ConnectionLifetimeTests.RunAsync(runner);
 await StreamingResponseTests.RunAsync(runner);
+await BoundedCaptureTests.RunAsync(runner);
 await ComposerRawRoundTripTests.RunAsync(runner);
 await JsonEditingTests.RunAsync(runner);
 await HostRemappingTests.RunAsync(runner);

@@ -25,19 +25,6 @@ public sealed class ProxyServer : IAsyncDisposable
         "TE", "Trailer", "Upgrade", "Proxy-Authenticate", "Proxy-Authorization",
     ];
 
-    /// <summary>
-    /// How much of a body is kept for the capture. Relaying is never refused because of it: a
-    /// download larger than this still reaches the client whole, only the retained copy stops.
-    /// </summary>
-    /// <remarks>
-    /// Refusing outright is what the parser used to do, and it turned a large download into a 502
-    /// before a single body byte had been read. Keeping everything is the opposite failure: a
-    /// modpack install fetches hundreds of files, and retaining every one of them is what drove
-    /// the process into collecting garbage instead of proxying. Bounding what is kept is what lets
-    /// relaying be unconditional.
-    /// </remarks>
-    private const long MaxCapturedBodyBytes = 256L * 1024 * 1024;
-
     private readonly ProxyOptions _options;
     private readonly CertificateAuthority _ca;
     private readonly SessionStore _store;
@@ -649,7 +636,7 @@ public sealed class ProxyServer : IAsyncDisposable
 
                 var relayed = await HttpBodyRelay.RelayAsync(
                     slot.Connection!.Reader, upstreamResponse.Body, clientStream,
-                    rechunk, MaxCapturedBodyBytes, ct).ConfigureAwait(false);
+                    rechunk, _options.MaxCapturedBodyBytes, ct).ConfigureAwait(false);
 
                 response.Body = relayed.Captured;
                 response.BodyTotalLength = relayed.TotalBytes;

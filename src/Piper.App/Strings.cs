@@ -619,6 +619,10 @@ internal static class Strings
             I18n.T("inspector.binaryJsonBody", ("bytes", bytes), ("contentType", contentType ?? BinaryContentType));
         public static string BodyDecodeFailed(string message) =>
             I18n.T("inspector.bodyDecodeFailed", ("message", message));
+        public static string BodyNotFullyCaptured(long kept, long total) =>
+            I18n.T("inspector.bodyNotFullyCaptured", ("kept", kept), ("total", total));
+        public static string BodyReleased(long total) =>
+            I18n.T("inspector.bodyReleased", ("total", total));
         public static string NotAJsonContentType => I18n.T("inspector.notAJsonContentType");
         public static string JsonSkipped => I18n.T("inspector.jsonSkipped");
         public static string NotValidJson(string message) => I18n.T("inspector.notValidJson", ("message", message));

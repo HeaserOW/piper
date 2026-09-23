@@ -36,6 +36,17 @@ public sealed class ProxyOptions
     /// </remarks>
     public TimeSpan UpstreamIdleTimeout { get; set; } = TimeSpan.FromSeconds(300);
 
+    /// <summary>
+    /// How much of a response body to keep for inspection. Relaying is never refused because of
+    /// it: a larger body still reaches the client whole, only the retained copy stops.
+    /// </summary>
+    /// <remarks>
+    /// Raise it to capture more, at the cost of memory. The default is chosen to be far larger
+    /// than anything worth reading in an inspector while still being small enough that hundreds of
+    /// captured downloads cannot push the process into collecting garbage instead of proxying.
+    /// </remarks>
+    public long MaxCapturedBodyBytes { get; set; } = 32L * 1024 * 1024;
+
     /// <summary>Advertise only encodings we can decode, so captured bodies stay readable.</summary>
     public bool NormalizeAcceptEncoding { get; set; } = true;
 

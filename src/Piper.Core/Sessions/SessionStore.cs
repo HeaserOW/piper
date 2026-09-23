@@ -18,9 +18,22 @@ public sealed class SessionStore
     private Func<Session, bool>? _captureFilter;
     private Func<Session, bool>? _completedSessionFilter;
     private int _firstSession;
+    private long _retainedBodyBytes;
 
     /// <summary>Oldest sessions are dropped once the cap is hit. 0 disables trimming.</summary>
     public int Capacity { get; set; } = 20_000;
+
+    /// <summary>
+    /// How many bytes of captured bodies to keep across all retained sessions. Once past it, the
+    /// oldest sessions give up their bodies. 0 disables the budget.
+    /// </summary>
+    /// <remarks>
+    /// A count of sessions is not a bound on memory: twenty thousand sessions is nothing if they
+    /// are API calls and several gigabytes if they are downloads. Only the bodies are released --
+    /// the sessions stay, keeping their URL, status, timings and the length they weighed on the
+    /// wire, because what a capture is mostly used for is seeing that a request happened at all.
+    /// </remarks>
+    public long RetainedBodyBudgetBytes { get; set; } = 512L * 1024 * 1024;
 
     public event EventHandler<SessionEventArgs>? SessionAdded;
     public event EventHandler<SessionEventArgs>? SessionUpdated;
@@ -91,6 +104,9 @@ public sealed class SessionStore
                     CompactDiscardedPrefixIfNeeded();
                 }
             }
+
+            _retainedBodyBytes += BodyBytesOf(session);
+            ReleaseOldestBodiesIfOverBudget();
         }
         SessionAdded?.Invoke(this, new SessionEventArgs(session));
     }
@@ -158,6 +174,7 @@ public sealed class SessionStore
         {
             _sessions.Clear();
             _firstSession = 0;
+            _retainedBodyBytes = 0;
             _pendingAdmission.Clear();
         }
         Cleared?.Invoke(this, EventArgs.Empty);
@@ -172,6 +189,34 @@ public sealed class SessionStore
         }
         Cleared?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>
+    /// Releases the bodies of the oldest sessions until the total retained is within budget.
+    /// </summary>
+    /// <remarks>
+    /// Oldest first, because the session someone is about to look at is almost always a recent one.
+    /// A session whose body has been released keeps reporting the length it weighed on the wire,
+    /// so nothing starts claiming a large download was empty.
+    /// </remarks>
+    private void ReleaseOldestBodiesIfOverBudget()
+    {
+        if (RetainedBodyBudgetBytes <= 0 || _retainedBodyBytes <= RetainedBodyBudgetBytes) return;
+
+        for (var i = _firstSession; i < _sessions.Count && _retainedBodyBytes > RetainedBodyBudgetBytes; i++)
+        {
+            var older = _sessions[i];
+            var freed = BodyBytesOf(older);
+            if (freed == 0) continue;
+
+            if (older.Request is { } request) request.ReleaseBody();
+            if (older.Response is { } response) response.ReleaseBody();
+            older.InvalidateSearchIndex();
+            _retainedBodyBytes -= freed;
+        }
+    }
+
+    private static long BodyBytesOf(Session session) =>
+        (session.Request?.Body.LongLength ?? 0) + (session.Response?.Body.LongLength ?? 0);
 
     private void CompactDiscardedPrefixIfNeeded()
     {
