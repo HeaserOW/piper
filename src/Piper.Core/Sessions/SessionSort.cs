@@ -34,9 +34,10 @@ public static class SessionSort
     private const long FailedResult = 1_002;
 
     /// <summary>
-    /// Time key for a session still in flight, sorted after every finished one, the way the Result
-    /// column puts "-" after real codes. Its elapsed time grows on every refresh, and sorting by it
-    /// moved each in-flight row a little further down the list every 150 ms.
+    /// Time and Size key for a session still in flight, sorted after every finished one, the way the
+    /// Result column puts "-" after real codes. Its elapsed time and received bytes grow on every
+    /// refresh, and sorting by them moved each in-flight row a little further down the list every
+    /// 150 ms.
     /// </summary>
     private const long PendingTime = long.MaxValue;
 
@@ -82,7 +83,8 @@ public static class SessionSort
             SessionSortColumn.Path => Textual(session, session.Path + session.Query),
             SessionSortColumn.Type => Textual(session, MimeTypes.ShortName(session.ContentType)),
             SessionSortColumn.Process => Textual(session, session.ProcessName),
-            SessionSortColumn.Size => Numeric(session, session.ResponseSize),
+            // A body still arriving counts up in place, so its size is unknown until it completes.
+            SessionSortColumn.Size => Numeric(session, session.Completed is null ? PendingTime : session.ResponseSize),
             SessionSortColumn.Time => Numeric(session, session.Completed is { } completed
                 ? (completed - session.Started).Ticks
                 : PendingTime),

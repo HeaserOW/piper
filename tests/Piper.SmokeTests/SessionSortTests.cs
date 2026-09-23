@@ -91,6 +91,10 @@ internal static class SessionSortTests
             runner.AreEqual(Ids([secondPending, firstPending, slow, quick]), Ids(Sorted(sessions, SessionSortColumn.Time, true)),
                 "descending reverses both");
 
+            // Both finished sessions have empty bodies, so they tie on size and keep capture order.
+            runner.AreEqual(Ids([slow, quick, firstPending, secondPending]), Ids(Sorted(sessions, SessionSortColumn.Size, false)),
+                "by Size too, since a body still arriving counts up in place");
+
             var before = Ids(Sorted(sessions, SessionSortColumn.Time, false));
             Thread.Sleep(20);
             runner.AreEqual(before, Ids(Sorted(sessions, SessionSortColumn.Time, false)),
