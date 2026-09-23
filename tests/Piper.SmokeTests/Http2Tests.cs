@@ -108,6 +108,40 @@ internal static class Http2Tests
             }
         });
 
+        await runner.RunAsync("a relay run cancelled, because the head was never sent, fails the session", async () =>
+        {
+            // How Http2Connection runs the relay when the head could not be encoded: nowhere to
+            // write and a token already cancelled. The relay owns the upstream leg and the session's
+            // ending, so both must still be settled.
+            var request = new HttpRequestData
+            {
+                Method = "GET",
+                RequestTarget = "/hello",
+                HttpVersion = "HTTP/2",
+                Url = new Uri($"{originBase}/hello"),
+            };
+            request.Headers.Set("Host", $"127.0.0.1:{origin.Port}");
+
+            var forwardStore = new SessionStore();
+            var response = await Http2RequestForwarder.ForwardAsync(
+                request, options, forwardStore, new Piper.Core.Http3.AltSvcCache(), "test", "test",
+                CancellationToken.None);
+            runner.IsTrue(response.RelayBody is not null, "the body is left on the upstream leg to relay");
+
+            string outcome;
+            try
+            {
+                await response.RelayBody!(Stream.Null, new CancellationToken(canceled: true));
+                outcome = "completed";
+            }
+            catch (OperationCanceledException) { outcome = "cancelled"; }
+
+            var session = forwardStore.Snapshot().Single();
+            runner.AreEqual("cancelled", outcome, "the relay reports that it did not deliver");
+            runner.AreEqual(SessionState.Failed, session.State, "the session is failed, not left awaiting a response");
+            runner.IsTrue(session.Completed is not null, "and it is ended");
+        });
+
         await runner.RunAsync("an untrusted upstream certificate reports why, not just that it was rejected", async () =>
         {
             // Deliberately not setting ValidateUpstreamCertificates = false: the origin's leaf is
