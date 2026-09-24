@@ -477,8 +477,9 @@ public sealed class SessionListView : UserControl
     /// </summary>
     private void OnColumnClick(object? sender, ColumnClickEventArgs e)
     {
-        // The last column is the unlabelled filler that soaks up spare width.
-        if (e.Column < 0 || e.Column >= FlexibleColumnFloors.Length) return;
+        // Only the real columns sort; the unlabelled filler past them does not. Checked against the
+        // enum itself, so a column added later cannot reach SessionSort as an undefined value.
+        if (e.Column < 0 || !Enum.IsDefined((SessionSortColumn)e.Column)) return;
 
         var column = (SessionSortColumn)e.Column;
         if (_sortColumn == column)
