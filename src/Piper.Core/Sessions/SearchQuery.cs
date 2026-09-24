@@ -393,11 +393,11 @@ public sealed class SearchQuery
     /// Whether a host-list pattern selects <paramref name="host"/>.
     /// </summary>
     /// <remarks>
-    /// A full domain or address ("example.com", "*.example.com", "10.0.0.1") matches that host and
-    /// its subdomains, never a lookalike such as evil-example.com. Anything else is a fragment and
-    /// matches any host containing it, which is how every pattern matched before this rule existed:
-    /// a word with no inner dot ("curseforge", "localhost"), one ending in a dot ("api.",
-    /// "192.168.") and a partial IPv4 address ("192.168.1"). Keeping fragments working matters
+    /// A full domain or address ("example.com", "*.example.com", "example.com.", "10.0.0.1") matches
+    /// that host and its subdomains, never a lookalike such as evil-example.com. Anything else is a
+    /// fragment and matches any host containing it, which is how every pattern matched before this
+    /// rule existed: a single label with or without a trailing dot ("curseforge", "localhost",
+    /// "api.") and a partial IPv4 address ("192.168.1", "192.168."). Keeping fragments working matters
     /// because saved filtersets carry them, and a show-only list whose patterns suddenly matched
     /// nothing would discard all traffic at admission after an upgrade.
     /// </remarks>
@@ -408,9 +408,14 @@ public sealed class SearchQuery
         pattern = NormaliseHostPattern(pattern);
         if (pattern.Length == 0) return false;
 
-        return IsHostFragment(pattern)
+        // A trailing root dot names the same domain ("example.com." is example.com), so it is judged
+        // on what is left. Treating every trailing dot as a fragment made a pasted FQDN a substring
+        // pattern, which admitted example.com.attacker.net. A single label ("api.") or a partial
+        // address ("192.168.") is still a fragment and keeps its dot in the substring it matches.
+        var domain = pattern.TrimEnd('.');
+        return IsHostFragment(domain)
             ? host.Contains(pattern, StringComparison.OrdinalIgnoreCase)
-            : IsSameOrSubdomain(WithoutPort(host).TrimEnd('.'), pattern);
+            : IsSameOrSubdomain(WithoutPort(host).TrimEnd('.'), domain);
     }
 
     /// <summary>
@@ -435,11 +440,11 @@ public sealed class SearchQuery
         return port.Length is > 0 and <= 5 && !port.ContainsAnyExcept("0123456789") ? host[..colon] : host;
     }
 
-    private static bool IsHostFragment(string pattern)
+    /// <summary>Whether a pattern, trailing dots already removed, is a fragment rather than a domain.</summary>
+    private static bool IsHostFragment(string domain)
     {
-        var dot = pattern.IndexOf('.');
-        if (dot <= 0 || pattern[^1] == '.') return true;
-        return pattern.All(c => char.IsAsciiDigit(c) || c == '.') && pattern.Count(c => c == '.') < 3;
+        if (domain.IndexOf('.') <= 0) return true;
+        return domain.All(c => char.IsAsciiDigit(c) || c == '.') && domain.Count(c => c == '.') < 3;
     }
 
     /// <summary>True when <paramref name="host"/> is <paramref name="domain"/> or sits beneath it.</summary>

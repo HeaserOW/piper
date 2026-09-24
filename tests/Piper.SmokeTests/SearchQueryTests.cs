@@ -308,7 +308,15 @@ internal static class SearchQueryTests
             var local = Build(url: "http://localhost:8080/");
 
             runner.IsTrue(Hits("domain:curseforge", api), "a word with no dot matches anywhere in the host");
-            runner.IsTrue(Hits("domain:api.", api), "so does one ending in a dot");
+            runner.IsTrue(Hits("domain:api.", api), "so does a single word ending in a dot");
+
+            // A trailing root dot on a full domain names the same domain; treating it as a substring
+            // fragment let a pasted FQDN admit a lookalike that merely contains it.
+            var apex = Build(url: "http://example.com/");
+            runner.IsTrue(Hits("domain:example.com.", apex), "example.com. matches example.com");
+            runner.IsTrue(Hits("domain:example.com.", Build(url: "http://api.example.com/")), "and its subdomains");
+            runner.IsTrue(!Hits("domain:example.com.", Build(url: "http://example.com.attacker.net/")),
+                "but not a host that only contains it");
             runner.IsTrue(Hits("domain:192.168.1", lan), "and a partial IPv4 address");
             runner.IsTrue(Hits("domain:192.168.", lan), "with or without its trailing dot");
             runner.IsTrue(Hits("domain:localhost", local), "a single-label host still matches");
