@@ -103,14 +103,29 @@ public sealed class ComposerPanel : UserControl
         _editorTabs.TabPages.Add(NewPage(Strings.Composer.TabRaw, _rawEditor)); // == RawTabIndex
         _editorTabs.Selecting += OnEditorTabSelecting;
         _editorTabs.Deselecting += OnEditorTabDeselecting;
+        // Typing in Raw updates the fields once the typing pauses, so the last edit wins whichever
+        // box it was made in. Parsing on every keystroke re-read the whole buffer and reset all four
+        // editors each time, which a captured multi-megabyte body made unusable. Text that does not
+        // parse stays marked dirty, and Send or a tab switch then refuses it rather than sending the
+        // fields; both read it back themselves, so neither waits for the pause.
+        _rawSyncTimer.Tick += (_, _) =>
+        {
+            _rawSyncTimer.Stop();
+            if (_rawDirty) TrySyncFromRaw(out _);
+        };
         _rawEditor.TextChanged += (_, _) =>
         {
             if (_syncingEditors) return;
-            // Typing in Raw updates the fields as soon as the text reads as a request, so the last
-            // edit always wins whichever box it was made in. Text that does not parse yet stays
-            // marked dirty, and Send or a tab switch then refuses it rather than sending the fields.
             _rawDirty = true;
-            TrySyncFromRaw(out _);
+            _rawSyncTimer.Stop();
+            if (_rawEditor.TextLength <= MaxLiveRawSyncLength) _rawSyncTimer.Start();
+        };
+        // Moving to another box ends the burst: bring the fields up to date first, so the edit made
+        // there is applied on top of the Raw text rather than overwritten by it when the pause comes.
+        _rawEditor.Leave += (_, _) =>
+        {
+            _rawSyncTimer.Stop();
+            if (_rawDirty) TrySyncFromRaw(out _);
         };
         _method.TextChanged += (_, _) => OnStructuredEdit();
         _url.TextChanged += (_, _) => OnStructuredEdit();
@@ -267,12 +282,20 @@ public sealed class ComposerPanel : UserControl
     private volatile bool _searchDirty;
 
     // The Raw tab and the structured fields (method, URL, headers, body) are two views of one
-    // request, and both are on screen at once, so each edit is copied to the other view as it is
-    // made. The fields are what a send is built from. _rawDirty means the Raw text has been typed
-    // in but does not read as a request yet: the fields are then stale, and a send or a tab switch
-    // has to stop and say so rather than send them.
+    // request, and both are on screen at once, so each edit is copied to the other view. The fields
+    // are what a send is built from. _rawDirty means the Raw text has been typed in and not read
+    // back yet, either because the typing has not paused or because it does not read as a request:
+    // the fields are then stale, and a send or a tab switch reads it back first, or stops and says
+    // why rather than send them.
     private bool _rawDirty;
     private bool _syncingEditors;
+    private readonly System.Windows.Forms.Timer _rawSyncTimer = new() { Interval = 300 };
+
+    /// <summary>
+    /// Above this many characters Raw text is read back only on leaving the box, a tab switch or a
+    /// send, not after each pause in typing: a pasted or captured body that size is not typed by hand.
+    /// </summary>
+    private const int MaxLiveRawSyncLength = 256 * 1024;
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -418,7 +441,19 @@ public sealed class ComposerPanel : UserControl
     /// </summary>
     private void OnEditorTabDeselecting(object? sender, TabControlCancelEventArgs e)
     {
-        if (e.TabPageIndex != RawTabIndex || TrySyncFromRaw(out var error)) return;
+        if (e.TabPageIndex != RawTabIndex) return;
+
+        // Blank Raw text is nothing typed rather than a broken request. Refusing it left no way off
+        // the tab after clearing the box; the fields stay as they were, and Raw is rebuilt from them
+        // the next time it is opened. Send still refuses an empty request.
+        _rawSyncTimer.Stop();
+        if (string.IsNullOrWhiteSpace(_rawEditor.Text))
+        {
+            _rawDirty = false;
+            return;
+        }
+
+        if (TrySyncFromRaw(out var error)) return;
 
         e.Cancel = true;
         ShowRawError(error);
@@ -448,6 +483,7 @@ public sealed class ComposerPanel : UserControl
             _syncingEditors = false;
         }
 
+        _rawSyncTimer.Stop();
         _rawDirty = false;
     }
 
@@ -662,6 +698,7 @@ public sealed class ComposerPanel : UserControl
         if (disposing)
         {
             _searchTimer.Dispose();
+            _rawSyncTimer.Dispose();
             _inFlight?.Dispose();
         }
         base.Dispose(disposing);
