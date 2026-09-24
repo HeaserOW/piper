@@ -358,6 +358,13 @@ sessions. The figures are read at the grid's refresh rate rather than reported p
 download costs no more than repainting its row. A body that fails part way keeps the size that did
 arrive.
 
+So that Size and Time stay in view, the grid keeps every column on screen down to a list about
+720 px wide at 100% scale, and only then scrolls sideways. Host, Path, Type and Process give up width
+first, and a long Path is shortened in the middle so its file name stays visible wherever the name
+itself fits. The compact columns
+are sized to the widest figure they can show at the current display scale and zoom, so a progress
+figure is never cut off.
+
 What *is* bounded is how much of a body is kept for inspection, by two limits:
 
 | | |

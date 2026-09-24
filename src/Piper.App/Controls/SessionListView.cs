@@ -16,23 +16,24 @@ namespace Piper.App.Controls;
 /// </remarks>
 public sealed class SessionListView : UserControl
 {
-    // Keep the compact fields stable while using surplus space for values that tend to be long.
-    // The order matches the real columns (and SessionSortColumn); a zero means the column stays at
-    // its minimum width. These are floors: MeasureColumnMinimums raises them to fit real values.
-    // Size is wide enough for a body still arriving, "123.4/456.7 MB", and Time for one that has
-    // been arriving for minutes, "123,456 ms", since both now count up in place.
-    private static readonly int[] ColumnBaseWidths = [52, 55, 62, 170, 300, 130, 110, 112, 88];
+    // The order matches the real columns. The compact ones are exactly as wide as the widest text
+    // they can show (see FixedColumnSamples), measured in the font they are drawn in so display
+    // scaling and zoom are covered. The long ones give up width first, down to these unscaled
+    // floors, and share any surplus by weight, so all nine stay on screen in a list about 720 px
+    // wide at 100% -- the progress in Size and Time is no use scrolled off to the right.
+    private static readonly int[] FlexibleColumnFloors = [0, 0, 0, 80, 100, 56, 56, 0, 0];
     private static readonly int[] ColumnGrowthWeights = [0, 0, 0, 3, 6, 2, 2, 0, 0];
+    private const int PathColumn = 4;
     private const int SizeColumn = 7;
     private const int TimeColumn = 8;
+
+    /// <summary>Horizontal inset of a cell's text on each side, as <see cref="OnDrawSubItem"/> draws it.</summary>
+    private const int CellPadding = 5;
 
     // The fill behind a body still arriving: the accent, faint enough to leave the text readable on
     // every row background, with a solid edge along the bottom so its length reads at a glance.
     private const int ProgressFillAlpha = 70;
     private const int ProgressEdgeHeight = 2;
-
-    /// <summary>Room each cell loses to <c>Rectangle.Inflate(bounds, -5, 0)</c> in the draw, plus slack.</summary>
-    private const int CellPadding = 12;
 
     /// <summary>Room a header loses to its text inset, plus the sort glyph beside it.</summary>
     private const int HeaderPadding = 12 + SortGlyphRoom;
@@ -65,7 +66,6 @@ public sealed class SessionListView : UserControl
     private Func<Session, bool>? _filtersetFilter;
     private Func<Session, bool>? _sessionHiddenHostsFilter;
     private bool _autoScroll = true;
-    private int[] _columnMinimumWidths = [.. ColumnBaseWidths];
 
     // Null keeps the store's own order, which is what the grid has always shown. A header click
     // picks a column; clicking the same one again reverses it.
@@ -133,6 +133,7 @@ public sealed class SessionListView : UserControl
         };
         DarkListView.EnableDoubleBuffering(_list);
 
+        // Placeholder widths: the real ones are measured once the grid has a handle to measure with.
         _list.Columns.Add(Strings.SessionList.ColumnId, 52, HorizontalAlignment.Right);
         _list.Columns.Add(Strings.SessionList.ColumnResult, 55, HorizontalAlignment.Left);
         _list.Columns.Add(Strings.SessionList.ColumnMethod, 62, HorizontalAlignment.Left);
@@ -140,10 +141,12 @@ public sealed class SessionListView : UserControl
         _list.Columns.Add(Strings.SessionList.ColumnPath, 300, HorizontalAlignment.Left);
         _list.Columns.Add(Strings.SessionList.ColumnType, 130, HorizontalAlignment.Left);
         _list.Columns.Add(Strings.SessionList.ColumnProcess, 110, HorizontalAlignment.Left);
-        _list.Columns.Add(Strings.SessionList.ColumnSize, ColumnBaseWidths[SizeColumn], HorizontalAlignment.Right);
-        _list.Columns.Add(Strings.SessionList.ColumnTime, ColumnBaseWidths[TimeColumn], HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnSize, 112, HorizontalAlignment.Right);
+        _list.Columns.Add(Strings.SessionList.ColumnTime, 88, HorizontalAlignment.Right);
         DarkListView.AddFillerColumn(_list);
         _list.Resize += (_, _) => ExpandColumnsToView();
+        _list.HandleCreated += (_, _) => RefitColumns();
+        _list.DpiChangedAfterParent += (_, _) => RefitColumns();
 
         _list.RetrieveVirtualItem += OnRetrieveVirtualItem;
         _list.ColumnClick += OnColumnClick;
@@ -182,7 +185,6 @@ public sealed class SessionListView : UserControl
         Controls.Add(_followButton);
         _followButton.BringToFront();
 
-        MeasureColumnMinimums();
         ExpandColumnsToView();
 
         _store.SessionAdded += (_, _) => RequestRefresh();
@@ -227,6 +229,11 @@ public sealed class SessionListView : UserControl
     /// <summary>Set when the search box or a visibility filter changed, so the next rebuild may
     /// scroll back to the top. A store refresh (a new row, a deleted row) must keep the position.</summary>
     private bool _filterChanged;
+    private int[] _columnMinimums = [];
+
+    // One character of the grid font, and the padding TextRenderer adds around a run of them.
+    private double _charWidth;
+    private double _textPadding;
     private Session? _dragSession;
     private Point _dragStart;
     private Session? _primarySelectedSession;
@@ -376,79 +383,79 @@ public sealed class SessionListView : UserControl
     }
 
     /// <summary>
+    /// Measures the columns again and lays them out. Call after the grid font changes size, as a
+    /// zoom does; a move to a monitor with a different scale refits on its own.
+    /// </summary>
+    public void RefitColumns()
+    {
+        if (!_list.IsHandleCreated) return;
+
+        var zoom = FontScale.Multiplier;
+        var minimums = new int[FlexibleColumnFloors.Length];
+        using (var graphics = _list.CreateGraphics())
+        {
+            for (var index = 0; index < minimums.Length; index++)
+            {
+                // A compact column also has to fit its own header with the sort glyph beside it,
+                // or sorting by Size or Time squeezes the heading into an ellipsis.
+                minimums[index] = FixedColumnSamples(index) is { } samples
+                    ? Math.Max(MeasureWidest(graphics, samples),
+                        TextRenderer.MeasureText(graphics, _list.Columns[index].Text, Palette.UiFont).Width + HeaderPadding)
+                    : (int)Math.Round(LogicalToDeviceUnits(FlexibleColumnFloors[index]) * zoom);
+            }
+
+            var ten = TextRenderer.MeasureText(graphics, new string('0', 10), Palette.Mono).Width;
+            var twenty = TextRenderer.MeasureText(graphics, new string('0', 20), Palette.Mono).Width;
+            _charWidth = (twenty - ten) / 10.0;
+            _textPadding = ten - 10 * _charWidth;
+        }
+
+        _columnMinimums = minimums;
+        ExpandColumnsToView();
+    }
+
+    /// <summary>The widest text a compact column can show, or null for a column that flexes.</summary>
+    private static string[]? FixedColumnSamples(int column) => column switch
+    {
+        0 => ["999999"],
+        1 => Format.WidestResultTexts(),
+        2 => ["OPTIONS", Strings.SessionList.TunnelMethod],
+        SizeColumn => Format.WidestSizeTexts(),
+        TimeColumn => Format.WidestDurationTexts(),
+        _ => null,
+    };
+
+    /// <summary>
+    /// Measures with the font, device context and flags the cell is drawn with, so the text that is
+    /// measured to fit is the text that fits: <see cref="TextRenderer"/> pads its text by default.
+    /// </summary>
+    private static int MeasureWidest(Graphics graphics, string[] samples)
+    {
+        var widest = 0;
+        foreach (var sample in samples)
+            widest = Math.Max(widest, TextRenderer.MeasureText(graphics, sample, Palette.Mono).Width);
+        return widest + 2 * CellPadding;
+    }
+
+    /// <summary>
     /// Uses extra horizontal room for the columns where request details are most likely to be
-    /// truncated. At narrower widths the original minimum widths are retained, so the grid still
-    /// has the usual horizontal scrolling behavior instead of crushing the compact fields.
+    /// truncated. Below the minimums the grid scrolls sideways instead of crushing the compact fields.
     /// </summary>
     private void ExpandColumnsToView()
     {
-        if (_expandingColumns || _list.ClientSize.Width <= 0) return;
+        if (_expandingColumns || _columnMinimums.Length == 0 || _list.ClientSize.Width <= 0) return;
 
         _expandingColumns = true;
         try
         {
-            var minimumTotal = _columnMinimumWidths.Sum();
-            var remainingExtra = Math.Max(0, _list.ClientSize.Width - minimumTotal);
-            var remainingWeight = ColumnGrowthWeights.Sum();
-
-            for (var index = 0; index < _columnMinimumWidths.Length; index++)
-            {
-                var weight = ColumnGrowthWeights[index];
-                var extra = weight == 0 ? 0 : remainingExtra * weight / remainingWeight;
-                _list.Columns[index].Width = _columnMinimumWidths[index] + extra;
-                remainingExtra -= extra;
-                remainingWeight -= weight;
-            }
+            var widths = ColumnLayout.Fit(_list.ClientSize.Width, _columnMinimums, ColumnGrowthWeights);
+            for (var index = 0; index < widths.Length; index++)
+                if (_list.Columns[index].Width != widths[index]) _list.Columns[index].Width = widths[index];
         }
         finally
         {
             _expandingColumns = false;
         }
-    }
-
-    /// <summary>
-    /// Sizes each column's floor to the values it routinely shows, in the fonts the grid draws with.
-    /// </summary>
-    /// <remarks>
-    /// Fixed pixel floors cut off everyday values at the default size -- OPTIONS in Method, CONNECT
-    /// in Result, "1,234 ms" in Time -- and the compact columns never grow, so zooming in made it
-    /// worse. Measured here and again whenever the font changes, which is how a zoom arrives.
-    /// </remarks>
-    private void MeasureColumnMinimums()
-    {
-        string[]?[] samples =
-        [
-            ["000000"],
-            ["CONNECT", "ERR"],
-            ["OPTIONS", "CONNECT", Strings.SessionList.TunnelMethod],
-            null,
-            null,
-            null,
-            null,
-            [Strings.Units.Kilobytes(1023.9), Strings.Units.Megabytes(999.9), Strings.Units.ProgressMegabytes(123.4, 456.7)],
-            [Strings.SessionList.Duration(123_456), Strings.SessionList.PendingDuration],
-        ];
-
-        var widths = new int[ColumnBaseWidths.Length];
-        for (var index = 0; index < widths.Length; index++)
-        {
-            var width = Math.Max(ColumnBaseWidths[index],
-                TextRenderer.MeasureText(_list.Columns[index].Text, Palette.UiFont).Width + HeaderPadding);
-            foreach (var sample in samples[index] ?? [])
-                width = Math.Max(width, TextRenderer.MeasureText(sample, Palette.Mono).Width + CellPadding);
-            widths[index] = width;
-        }
-
-        _columnMinimumWidths = widths;
-    }
-
-    protected override void OnFontChanged(EventArgs e)
-    {
-        base.OnFontChanged(e);
-        // Font changes can arrive while the base class is still being constructed.
-        if (_list is null) return;
-        MeasureColumnMinimums();
-        ExpandColumnsToView();
     }
 
     private void ApplyFilter()
@@ -471,7 +478,7 @@ public sealed class SessionListView : UserControl
     private void OnColumnClick(object? sender, ColumnClickEventArgs e)
     {
         // The last column is the unlabelled filler that soaks up spare width.
-        if (e.Column < 0 || e.Column >= ColumnBaseWidths.Length) return;
+        if (e.Column < 0 || e.Column >= FlexibleColumnFloors.Length) return;
 
         var column = (SessionSortColumn)e.Column;
         if (_sortColumn == column)
@@ -698,19 +705,6 @@ public sealed class SessionListView : UserControl
             // so chasing it would drag the view around as rows land in the middle.
             var following = _autoScroll && wasAtBottom && _visible.Count > 0 && IsCaptureOrder;
 
-            // A virtual ListView keeps its scroll offset when the row count changes underneath it.
-            // Clearing the grid, or typing a filter that matches far fewer rows, leaves the view
-            // parked past the last row: the rows are there, but nothing paints until a click happens
-            // to scroll it back into range. A new list or a narrower filter starts again from the
-            // top. Anything else keeps the user's place.
-            if (_visible.Count > 0 && !following)
-            {
-                if (previousCount == 0 || (filterChanged && _visible.Count < previousCount))
-                    _list.EnsureVisible(0);
-                else
-                    HoldAnchorInView(anchor, previousTop);
-            }
-
             if (previousIds is { Count: > 0 })
             {
                 _list.SelectedIndices.Clear();
@@ -718,7 +712,23 @@ public sealed class SessionListView : UserControl
                     if (previousIds.Contains(_visible[index].Id)) _list.SelectedIndices.Add(index);
             }
 
-            if (following) _list.EnsureVisible(_visible.Count - 1);
+            // A virtual ListView keeps its scroll offset when the row count changes underneath it.
+            // Clearing the grid, or typing a filter that matches far fewer rows, leaves the view
+            // parked past the last row: the rows are there, but nothing paints until a click happens
+            // to scroll it back into range. A new list or a narrower filter starts again from the
+            // top. Anything else keeps the user's place. This runs after the selection is restored,
+            // since reselecting rows can drag the view toward them.
+            if (following)
+            {
+                _list.EnsureVisible(_visible.Count - 1);
+            }
+            else if (_visible.Count > 0)
+            {
+                if (previousCount == 0 || (filterChanged && _visible.Count < previousCount))
+                    _list.EnsureVisible(0);
+                else
+                    HoldAnchorInView(anchor, previousTop);
+            }
         }
         finally
         {
@@ -972,8 +982,15 @@ public sealed class SessionListView : UserControl
             _ => TextFormatFlags.Left,
         };
 
-        TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? string.Empty, Palette.Mono,
-            Rectangle.Inflate(e.Bounds, -5, 0), colour, flags);
+        // A narrow Path gives up its middle rather than its end, where the file name is:
+        // "/fi.../create-1.20.1.jar" says what is downloading, "/files/4970/112/..." does not. The
+        // grid font is monospaced, so what fits is a character count and painting measures nothing.
+        var text = e.SubItem?.Text ?? string.Empty;
+        if (e.ColumnIndex == PathColumn && _charWidth > 0)
+            text = Format.ShortenPath(text, (int)((e.Bounds.Width - 2 * CellPadding - _textPadding) / _charWidth));
+
+        TextRenderer.DrawText(e.Graphics, text, Palette.Mono,
+            Rectangle.Inflate(e.Bounds, -CellPadding, 0), colour, flags);
     }
 
     /// <summary>

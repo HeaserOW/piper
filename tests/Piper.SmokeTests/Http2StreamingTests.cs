@@ -123,6 +123,41 @@ internal static class Http2StreamingTests
             runner.AreEqual("failed", outcome, "the client sees the transfer fail");
         });
 
+        await runner.RunAsync("a head that cannot be sent still runs the relay, cancelled, and resets the stream", async () =>
+        {
+            // The relay owns wherever its body comes from -- the proxy's upstream connection -- so it
+            // has to run even when the head never went out, or that connection is never released.
+            var relayRan = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            await using var harness = await Harness.StartAsync((_, _) =>
+            {
+                var head = new HttpResponseData { StatusCode = 200 };
+                head.Headers.Add("X-Unencodable", null!); // HPACK has no representation for it
+                return Task.FromResult(new Http2StreamResponse(head, (_, ct) =>
+                {
+                    relayRan.TrySetResult(ct.IsCancellationRequested);
+                    ct.ThrowIfCancellationRequested();
+                    return Task.CompletedTask;
+                }));
+            });
+
+            using var client = harness.CreateClient();
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            string outcome;
+            try
+            {
+                using var response = await client.GetAsync($"{harness.BaseUrl}/unencodable", budget.Token);
+                outcome = $"answered {(int)response.StatusCode}";
+            }
+            catch (HttpRequestException) { outcome = "failed"; }
+            catch (OperationCanceledException) { outcome = "left waiting"; }
+
+            runner.AreEqual("failed", outcome, "the client is told the stream failed");
+            var ran = await Task.WhenAny(relayRan.Task, Task.Delay(TimeSpan.FromSeconds(10))) == relayRan.Task;
+            runner.IsTrue(ran && relayRan.Task.Result, "the relay ran, with a token already cancelled");
+        });
+
         await runner.RunAsync("a raised SETTINGS_INITIAL_WINDOW_SIZE unblocks a stream that had none", async () =>
         {
             // RFC 9113 6.9.2: a new initial window moves every open stream's window by the

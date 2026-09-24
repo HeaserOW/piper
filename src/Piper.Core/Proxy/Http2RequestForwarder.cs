@@ -177,8 +177,14 @@ internal static class Http2RequestForwarder
             {
                 try
                 {
-                    // Here rather than before returning: the connection has queued the HEADERS
-                    // frame by the time it runs this, so only now is the head with the client.
+                    // Already cancelled when the head could not be sent, or when the client reset
+                    // the stream or the connection closed first. A body that happened to be
+                    // buffered whole must not then be recorded as delivered.
+                    if (relayCt.IsCancellationRequested)
+                        throw new OperationCanceledException("The stream ended before the body was relayed.", relayCt);
+
+                    // Here rather than before returning: past the check above, the connection has
+                    // queued the HEADERS frame, so only now is the head with the client.
                     ProxyServer.EnterReceivingBody(session, body);
                     store.NotifyUpdated(session);
 

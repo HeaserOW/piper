@@ -21,6 +21,7 @@
     <Compile Include="..\..\src\Piper.App\I18n.cs" Link="I18n.cs" />
     <!-- Free of WinForms, so the session list's size and progress text can be checked here. -->
     <Compile Include="..\..\src\Piper.App\Controls\Format.cs" Link="Format.cs" />
+    <Compile Include="..\..\src\Piper.App\Controls\ColumnLayout.cs" Link="ColumnLayout.cs" />
     <EmbeddedResource Include="..\..\src\Piper.App\Locales\en.json" LogicalName="Piper.App.Locales.en.json" />
   </ItemGroup>
 

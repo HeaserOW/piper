@@ -1609,6 +1609,7 @@ public sealed class MainForm : Form, IMessageFilter
         Palette.RescaleFonts();
         Palette.Apply(this);
         RefreshStatusColours();
+        _sessionList.RefitColumns();
         UpdateZoomStatus();
         UpdateZoomMenu();
         InvalidateTheme(this);
